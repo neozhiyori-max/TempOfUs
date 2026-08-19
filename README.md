@@ -21,16 +21,16 @@ BepInExのIL2CPP導入手順では、32ビットWindows実行形式には `Unity
 
 ## インストール
 
-1. [最新リリース](../../releases/latest) から **`tempMOD-public.zip`** をダウンロードします。
+1. [最新リリース](../../releases/latest) から **`tempMOD-full.zip`** をダウンロードします。
 2. ZIPをAmong Usのインストールフォルダへ展開します。Steamの標準例は `C:\Program Files (x86)\Steam\steamapps\common\Among Us\` です。
 3. `BepInEx\plugins\TempMod.dll` と `BepInEx\plugins\TempMod.Core.dll` が配置されていることを確認します。
 4. ゲームを起動します。タイトルにTempOfUsロゴが表示され、`BepInEx\LogOutput.log` に `Loading [tempMOD 0.2.0]` があれば読み込み成功です。
 
-BepInExが未導入の場合は、先にゲームと一致する **BepInEx 6 IL2CPP x86版** を導入してください。ゲーム本体は配布物に含めません。
+`tempMOD-full.zip` には、対象環境で動作確認済みの **BepInEx 6 IL2CPP x86ランタイム** を同梱しています。ゲーム本体、個人設定、ログ、ゲームごとに生成されるインターオプ解析物は含めません。BepInExを既に導入済みの場合は、軽量な `tempMOD-public.zip` を展開するだけでも更新できます。
 
 ## 自動更新
 
-公開版は起動時にこのリポジトリのGitHub Releasesを確認します。新しい公開版の `tempMOD-public.zip` がある場合、バックグラウンドで取得し、**ゲーム終了後に自動で展開**します。新しい版は次回起動時から有効です。
+公開版は起動時にこのリポジトリのGitHub Releasesを確認します。新しい公開版の `tempMOD-public.zip` がある場合、バックグラウンドで取得し、**ゲーム終了後に自動で展開**します。新しい版は次回起動時から有効です。自動更新はBepInEx本体を上書きしない軽量なMOD更新だけを適用します。
 
 更新確認に失敗してもゲームは通常どおり起動し、現在の版は変更されません。更新が適用されない場合は、ReleasesからZIPを手動で上書き展開してください。管理者検証版は公開版へ置き換わらないよう、自動更新を行いません。
 
