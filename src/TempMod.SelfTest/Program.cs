@@ -13,6 +13,9 @@ var tests = new (string Name, Action Run)[]
     ("1人でも役職抽選できる", SinglePlayerAssignment),
     ("陣営別人数上限を守る", FactionRoleLimitsAreRespected),
     ("クリーナーは死体を清掃できる", CleanerRemovesBody),
+    ("アンダーテイカーは死体を牽引・配置できる", UndertakerCarriesAndDropsBody),
+    ("アンダーテイカーは会議開始時に牽引死体を配置する", UndertakerDropsBodyAtMeetingStart),
+    ("アンダーテイカー死亡時に牽引死体を配置する", UndertakerDropsBodyOnCarrierDeath),
     ("ボマーは時限爆弾で周囲を巻き込む", BomberExplodesNearbyPlayers),
     ("ジャッカルはクルーをサイドキックに勧誘できる", JackalRecruitsSidekick),
     ("ジャッカル勧誘は役職変更イベントを通知する", JackalRecruitEmitsRoleChanged),
@@ -31,6 +34,9 @@ var tests = new (string Name, Action Run)[]
     ("ゾンビはクルーを子ゾンビに感染できる", ZombieInfectsCrew),
     ("ハゲタカの死体回収数は時間経過後も残る", VultureCollectionCountPersists),
     ("マッドゲッサーは会議中の正解で対象をキルできる", MadGuesserKillsCorrectRole),
+    ("マッドゲッサーは設定された会議内残弾まで推測できる", MadGuesserUsesConfiguredShotsPerMeeting),
+    ("マッドゲッサーは会議内残弾を超えて推測できない", MadGuesserCannotExceedShotsPerMeeting),
+    ("マッドゲッサーは次会議で推測残弾を回復する", MadGuesserShotsResetAtNextMeeting),
     ("マッドゲッサーは会議中の誤答で自爆する", MadGuesserDiesOnWrongGuess),
     ("アドボケイトの買収は自分を二票、対象を零票にする", AdvocateBribeChangesVoteWeight),
     ("アルソニストは全員への注油後に点火で勝利する", ArsonistIgnitesAllDousedPlayers),
@@ -212,6 +218,59 @@ static void CleanerRemovesBody()
     Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Clean, 2, null, 3), 3));
     engine.Tick(3.2f);
     Assert(!engine.Bodies.ContainsKey(2));
+}
+
+static void UndertakerCarriesAndDropsBody()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Undertaker);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.AssignRole(3, RoleId.Impostor);
+    Assert(engine.TryHandleAbility(new AbilityRequest(3, AbilityId.Kill, 2, null, 2), 2));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.CarryBody, 2, null, 3), 3));
+    Assert(engine.Players[1].CarriedBodyOwnerId == 2);
+    Assert(engine.Bodies[2].IsCarried);
+    var destination = new Position(4, 5);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.DropBody, null, destination, 4), 4));
+    Assert(engine.Players[1].CarriedBodyOwnerId is null);
+    Assert(!engine.Bodies[2].IsCarried);
+    Assert(engine.Bodies[2].Position == destination);
+}
+
+static void UndertakerDropsBodyAtMeetingStart()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Undertaker);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.AssignRole(3, RoleId.Impostor);
+    Assert(engine.TryHandleAbility(new AbilityRequest(3, AbilityId.Kill, 2, null, 2), 2));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.CarryBody, 2, null, 3), 3));
+    engine.UpdatePosition(1, new Position(7, 8), 4);
+    engine.StartMeeting(5);
+    Assert(engine.Players[1].CarriedBodyOwnerId is null);
+    Assert(!engine.Bodies[2].IsCarried);
+    Assert(engine.Bodies[2].Position == new Position(7, 8));
+}
+
+static void UndertakerDropsBodyOnCarrierDeath()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Undertaker);
+    engine.AssignRole(2, RoleId.Crewmate);
+    // アンダーテイカーと敵対するジャッカルが運搬者をキルする状況を作る。
+    engine.AssignRole(3, RoleId.Jackal);
+    Assert(engine.TryHandleAbility(new AbilityRequest(3, AbilityId.Kill, 2, null, 2), 2));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.CarryBody, 2, null, 3), 3));
+    engine.UpdatePosition(1, new Position(6, 9), 4);
+    engine.UpdatePosition(3, new Position(5, 9), 32);
+    if (!engine.TryHandleAbility(new AbilityRequest(3, AbilityId.Kill, 1, null, 33), 33))
+        throw new InvalidOperationException("ジャッカルが運搬者をキルできませんでした。");
+    if (engine.Players[1].IsAlive)
+        throw new InvalidOperationException("運搬者が死亡状態になりませんでした。");
+    if (engine.Bodies[2].IsCarried)
+        throw new InvalidOperationException("運搬者死亡後も死体が運搬中です。");
+    if (engine.Bodies[2].Position != new Position(6, 9))
+        throw new InvalidOperationException($"死体配置座標が不正です: {engine.Bodies[2].Position}");
 }
 
 static void BomberExplodesNearbyPlayers()
@@ -409,6 +468,52 @@ static void MadGuesserKillsCorrectRole()
     Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.GuessRole, 2, new Position((float)RoleId.Sheriff, 0), 3), 3));
     Assert(!engine.Players[2].IsAlive);
     Assert(engine.Players[1].IsAlive);
+}
+
+static void MadGuesserUsesConfiguredShotsPerMeeting()
+{
+    var gateway = new TestGateway();
+    var engine = new RoleEngine(gateway, new RoleOptions { MadGuesserShotsPerMeeting = 2, StandardKillCooldown = 0, KillDistance = 3 });
+    for (byte playerId = 1; playerId <= 4; playerId++)
+    {
+        engine.RegisterPlayer(playerId, $"P{playerId}");
+        engine.UpdatePosition(playerId, new Position(playerId, 0), 1);
+    }
+    engine.AssignRole(1, RoleId.MadGuesser);
+    engine.AssignRole(2, RoleId.Sheriff);
+    engine.AssignRole(3, RoleId.Doctor);
+    engine.AssignRole(4, RoleId.Impostor);
+    engine.StartMeeting(2);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.GuessRole, 2, new Position((byte)RoleId.Sheriff, 0), 3), 3));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.GuessRole, 3, new Position((byte)RoleId.Doctor, 0), 4), 4));
+    Assert(engine.GetMadGuesserShotsRemaining(1) == 0);
+    Assert(!engine.Players[2].IsAlive && !engine.Players[3].IsAlive);
+}
+
+static void MadGuesserCannotExceedShotsPerMeeting()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.MadGuesser);
+    engine.AssignRole(2, RoleId.Sheriff);
+    engine.AssignRole(3, RoleId.Doctor);
+    engine.StartMeeting(2);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.GuessRole, 2, new Position((byte)RoleId.Sheriff, 0), 3), 3));
+    Assert(!engine.TryHandleAbility(new AbilityRequest(1, AbilityId.GuessRole, 3, new Position((byte)RoleId.Doctor, 0), 4), 4));
+    Assert(engine.Players[3].IsAlive);
+}
+
+static void MadGuesserShotsResetAtNextMeeting()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.MadGuesser);
+    engine.AssignRole(2, RoleId.Sheriff);
+    engine.AssignRole(3, RoleId.Impostor);
+    engine.StartMeeting(2);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.GuessRole, 2, new Position((byte)RoleId.Sheriff, 0), 3), 3));
+    Assert(engine.GetMadGuesserShotsRemaining(1) == 0);
+    engine.EndMeeting(null, 4, evaluateVictory: false);
+    engine.StartMeeting(5);
+    Assert(engine.GetMadGuesserShotsRemaining(1) == 1);
 }
 
 static void MadGuesserDiesOnWrongGuess()

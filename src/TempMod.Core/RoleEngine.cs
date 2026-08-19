@@ -29,6 +29,8 @@ public sealed class RoleEngine
     public IReadOnlyList<Footprint> Footprints => _footprints;
     /// <summary>HUDの点灯判定と能力実行で共有する、対象指定能力の有効射程。</summary>
     public float TargetRange => _options.KillDistance;
+    public float UndertakerSpeedMultiplier => _options.UndertakerSpeedMultiplier;
+    public float CleanerDuration => _options.CleanerDuration;
     public bool IsMeetingActive { get; private set; }
 
     /// <summary>
@@ -64,6 +66,7 @@ public sealed class RoleEngine
             player.CarriedBodyOwnerId = snapshot.CarriedBodyOwnerId;
             player.RoleErasedOnDeath = snapshot.RoleErasedOnDeath;
             player.SheriffKillsRemaining = snapshot.SheriffKillsRemaining;
+            player.MadGuesserShotsThisMeeting = snapshot.MadGuesserShotsThisMeeting;
             player.AbilityCooldowns.Clear();
             foreach (var cooldown in snapshot.AbilityCooldowns)
                 player.AbilityCooldowns[cooldown.Key] = cooldown.Value;
@@ -163,10 +166,16 @@ public sealed class RoleEngine
         _activeTrackUntil.Clear();
         _trackTargets.Clear();
         _activeVitalsUntil.Clear();
+        // TownOfUsのUndertakerと同様に、会議へ持ち込まれた死体は会議開始位置で即座に配置する。
+        // 会議中にBodyStateが運搬状態のまま残ると、会議後の通報・表示同期が壊れるためである。
+        foreach (var carrier in _players.Values.Where(player => player.CarriedBodyOwnerId is not null).ToArray())
+            DropCarriedBodyAtCarrier(carrier, now, "会議開始");
         foreach (var player in _players.Values)
         {
             player.PuppetControllerId = null;
             player.PuppetExpiresAt = 0;
+            // SuperNewRolesのEvilGuesserShotsPerMeetingと同様に、会議ごとに推測残弾を回復する。
+            player.MadGuesserShotsThisMeeting = 0;
         }
     }
 
@@ -213,6 +222,19 @@ public sealed class RoleEngine
         }
         return evaluateVictory ? EvaluateVictory(now) : VictoryResult.None;
     }
+
+    /// <summary>会議UI用のマッドゲッサー残弾判定。ホスト側のTryMeetingGuessでも同じ条件を再検証する。</summary>
+    public bool CanMadGuesserShoot(byte playerId)
+        => IsMeetingActive
+            && _players.TryGetValue(playerId, out var player)
+            && player.IsAlive
+            && player.PrimaryRole == RoleId.MadGuesser
+            && player.MadGuesserShotsThisMeeting < _options.MadGuesserShotsPerMeeting;
+
+    public int GetMadGuesserShotsRemaining(byte playerId)
+        => _players.TryGetValue(playerId, out var player)
+            ? Math.Max(0, _options.MadGuesserShotsPerMeeting - player.MadGuesserShotsThisMeeting)
+            : 0;
 
     public int GetVoteWeight(byte playerId)
     {
@@ -351,8 +373,8 @@ public sealed class RoleEngine
 
     private bool TryMeetingGuess(PlayerState actor, byte? targetId, Position? requestedPosition, float now)
     {
-        if (!IsMeetingActive || actor.PrimaryRole != RoleId.MadGuesser || !CanUse(actor, AbilityId.GuessRole, now))
-            return Reject(actor, AbilityId.GuessRole, now, "会議中のマッドゲッサーだけが推測できます。");
+        if (!CanMadGuesserShoot(actor.PlayerId))
+            return Reject(actor, AbilityId.GuessRole, now, "会議中のマッドゲッサーだけが、会議ごとの残弾の範囲で推測できます。");
         if (targetId is not byte id || !_players.TryGetValue(id, out var target) || !target.IsAlive || id == actor.PlayerId)
             return Reject(actor, AbilityId.GuessRole, now, "推測対象を選んでください。");
         if (requestedPosition is not Position guessPayload || guessPayload.X < byte.MinValue || guessPayload.X > byte.MaxValue || !Enum.IsDefined(typeof(RoleId), (byte)guessPayload.X))
@@ -361,7 +383,8 @@ public sealed class RoleEngine
         var guessedRole = (RoleId)(byte)guessPayload.X;
         if (RoleCatalog.GetFaction(guessedRole) != Faction.Crew)
             return Reject(actor, AbilityId.GuessRole, now, "クルー役職だけを推測できます。");
-        SetCooldown(actor, AbilityId.GuessRole, now, float.MaxValue / 4f);
+        // SuperNewRolesのGuesserAbilityと同様に、推測の成否を問わず会議内の残弾を1つ消費する。
+        actor.MadGuesserShotsThisMeeting++;
         if (target.PrimaryRole == guessedRole)
             KillPlayer(target.PlayerId, actor.PlayerId, now, $"推測成功: {RoleCatalog.Get(guessedRole).DisplayName}", silent: false, erased: false);
         else
@@ -916,6 +939,25 @@ public sealed class RoleEngine
         return true;
     }
 
+    /// <summary>
+    /// 牽引中の死体を運搬者の現在位置へ安全に配置する。会議開始・死亡・ベント進入時の共通後始末に使う。
+    /// </summary>
+    public bool ForceDropCarriedBody(byte carrierId, Position position, float now, string detail)
+    {
+        if (!_players.TryGetValue(carrierId, out var carrier) || carrier.CarriedBodyOwnerId is not byte ownerId || !_bodies.TryGetValue(ownerId, out var body))
+            return false;
+        _bodies[ownerId] = body with { Position = position, IsCarried = false };
+        carrier.CarriedBodyOwnerId = null;
+        _gateway.Emit(new GameEvent(GameEventKind.BodyDropped, now, carrierId, ownerId, detail, position));
+        return true;
+    }
+
+    private void DropCarriedBodyAtCarrier(PlayerState carrier, float now, string detail)
+        => ForceDropCarriedBody(carrier.PlayerId, carrier.Position, now, detail);
+
+    public bool IsUndertakerCarrying(byte playerId)
+        => _players.TryGetValue(playerId, out var player) && player.PrimaryRole == RoleId.Undertaker && player.CarriedBodyOwnerId is not null;
+
     private bool TryCarryBody(PlayerState actor, byte? bodyOwnerId, float now)
     {
         if (actor.PrimaryRole != RoleId.Undertaker)
@@ -939,13 +981,12 @@ public sealed class RoleEngine
             return Reject(actor, AbilityId.DropBody, now, "運搬中の死体がありません。");
 
         var position = requestedPosition ?? actor.Position;
-        if (!_gateway.IsWalkable(position) || !_bodies.TryGetValue(ownerId, out var body))
+        if (!_gateway.IsWalkable(position) || !_bodies.ContainsKey(ownerId))
             return Reject(actor, AbilityId.DropBody, now, "死体を置けない位置です。");
 
-        _bodies[ownerId] = body with { Position = position, IsCarried = false };
-        actor.CarriedBodyOwnerId = null;
-        _gateway.Emit(new GameEvent(GameEventKind.BodyDropped, now, actor.PlayerId, ownerId, Position: position));
-        return Accept(actor, AbilityId.DropBody, now);
+        return ForceDropCarriedBody(actor.PlayerId, position, now, "手動配置")
+            ? Accept(actor, AbilityId.DropBody, now)
+            : Reject(actor, AbilityId.DropBody, now, "運搬中の死体を配置できませんでした。");
     }
 
     private bool TryBite(PlayerState actor, byte? targetId, float now)
@@ -1060,8 +1101,10 @@ public sealed class RoleEngine
             return;
         }
 
+        // TownOfUsのUndertakerは死亡時に牽引を解除する。運搬死体を消失状態のまま残さない。
+        if (target.CarriedBodyOwnerId is not null)
+            DropCarriedBodyAtCarrier(target, now, "運搬者死亡");
         target.IsAlive = false;
-        target.IsCursed = false;
         target.BiteExpiresAt = 0;
         target.PuppetControllerId = null;
         target.PuppetExpiresAt = 0;

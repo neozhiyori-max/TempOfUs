@@ -23,6 +23,7 @@ internal sealed class TempModSettings
     internal ConfigEntry<float> DoctorDeathTimeDisplaySeconds { get; }
     internal ConfigEntry<float> StandardKillCooldown { get; }
     internal ConfigEntry<float> NinjaKillCooldown { get; }
+    internal ConfigEntry<int> MadGuesserShotsPerMeeting { get; }
     internal ConfigEntry<float> MadScientistDuration { get; }
     internal ConfigEntry<float> MadScientistCooldown { get; }
     internal ConfigEntry<float> TrackerDuration { get; }
@@ -66,6 +67,7 @@ internal sealed class TempModSettings
         DoctorDeathTimeDisplaySeconds = config.Bind("能力: ドクター", "死亡推定時刻の表示時間", 5f, "秒単位です。");
         StandardKillCooldown = config.Bind("能力: 共通", "標準キルクールダウン", 25f, "秒単位です。");
         NinjaKillCooldown = config.Bind("能力: ニンジャ", "キルクールダウン", 40f, "秒単位です。");
+        MadGuesserShotsPerMeeting = config.Bind("能力: マッドゲッサー", "会議ごとの推測回数", 1, "会議中に推測できる最大回数です。1～5回。");
         MadScientistDuration = config.Bind("能力: マッドサイエンティスト", "バイタル表示時間", 5f, "秒単位です。");
         MadScientistCooldown = config.Bind("能力: マッドサイエンティスト", "クールダウン", 45f, "秒単位です。");
         TrackerDuration = config.Bind("能力: トラッカー", "追跡時間", 10f, "秒単位です。");
@@ -141,6 +143,7 @@ internal sealed class TempModSettings
             Detail(DetailSettingKey.TimeTravelerCooldown, "クールダウン", Seconds(TimeTravelerCooldown.Value)),
         },
         RoleId.Ninja => new[] { Detail(DetailSettingKey.NinjaKillCooldown, "キルクールダウン", Seconds(NinjaKillCooldown.Value)) },
+        RoleId.MadGuesser => new[] { Detail(DetailSettingKey.MadGuesserShotsPerMeeting, "会議ごとの推測回数", $"{MadGuesserShotsPerMeeting.Value} 回") },
         RoleId.Warlock => new[]
         {
             Detail(DetailSettingKey.WarlockDuration, "呪い持続時間", Seconds(WarlockDuration.Value)),
@@ -237,6 +240,7 @@ internal sealed class TempModSettings
             case DetailSettingKey.TimeTravelerSeconds: TimeTravelerSeconds.Value = AdjustSeconds(TimeTravelerSeconds, delta); break;
             case DetailSettingKey.TimeTravelerCooldown: TimeTravelerCooldown.Value = AdjustSeconds(TimeTravelerCooldown, delta); break;
             case DetailSettingKey.NinjaKillCooldown: NinjaKillCooldown.Value = AdjustSeconds(NinjaKillCooldown, delta); break;
+            case DetailSettingKey.MadGuesserShotsPerMeeting: MadGuesserShotsPerMeeting.Value = Math.Clamp(MadGuesserShotsPerMeeting.Value + delta, 1, 5); break;
             case DetailSettingKey.WarlockDuration: WarlockDuration.Value = AdjustSeconds(WarlockDuration, delta); break;
             case DetailSettingKey.WarlockCooldown: WarlockCooldown.Value = AdjustSeconds(WarlockCooldown, delta); break;
             case DetailSettingKey.PuppeteerDuration: PuppeteerDuration.Value = AdjustSeconds(PuppeteerDuration, delta); break;
@@ -312,6 +316,7 @@ internal sealed class TempModSettings
             SheriffCanKillNeutrals = SheriffCanKillNeutrals.Value,
             StandardKillCooldown = Math.Max(0, StandardKillCooldown.Value),
             NinjaKillCooldown = Math.Max(0, NinjaKillCooldown.Value),
+            MadGuesserShotsPerMeeting = Math.Clamp(MadGuesserShotsPerMeeting.Value, 1, 5),
             MadScientistDuration = Math.Max(0.5f, MadScientistDuration.Value),
             MadScientistCooldown = Math.Max(0, MadScientistCooldown.Value),
             TrackerDuration = Math.Max(0.5f, TrackerDuration.Value),
@@ -375,6 +380,7 @@ internal sealed class TempModSettings
         TimeTravelerSeconds,
         TimeTravelerCooldown,
         NinjaKillCooldown,
+        MadGuesserShotsPerMeeting,
         WarlockDuration,
         WarlockCooldown,
         PuppeteerDuration,

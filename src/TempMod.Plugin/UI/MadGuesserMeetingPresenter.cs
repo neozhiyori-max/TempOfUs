@@ -59,7 +59,7 @@ internal static class MadGuesserMeetingPresenter
                 UnityEngine.Object.Destroy(buttonObject);
                 continue;
             }
-            button.ChangeButtonText("推測");
+            button.ChangeButtonText($"推測 ({TempModPlugin.Runtime.GetMadGuesserShotsRemaining()})");
             button.OnClick = new Button.ButtonClickedEvent();
             button.OnClick.AddListener((UnityAction)(() => OpenRoleList(meetingHud, targetId, area.ConfirmButton.gameObject)));
         }
@@ -96,7 +96,7 @@ internal static class MadGuesserMeetingPresenter
             }));
             RoleButtons.Add(buttonObject);
         }
-        HudManager.Instance?.ShowPopUp("<color=#FF6666>推測するクルー役職を選択してください。</color>");
+        HudManager.Instance?.ShowPopUp($"<color=#FF6666>推測するクルー役職を選択してください。残り {TempModPlugin.Runtime.GetMadGuesserShotsRemaining()} 回</color>");
     }
 
     private static void RemoveCustomButtons(MeetingHud meetingHud)

@@ -84,6 +84,9 @@ tempMODは、独自の仕組みを増やすのではなく、**公開済みで�
 | tempMOD対象 | 実装状態 | 上流MOD・固定コミット | 参照／適合元ファイル | tempMOD側の適合差分 |
 |---|---|---|---|---|
 | ジャッカル／サイドキック | 第1段階の完全移植 | SuperNewRoles `713c98779e14000479f7578a28705264645f07e5`（GPL-3.0） | `Roles/Ability/JackalAbility.cs`、`Roles/Ability/CustomSidekickButtonAbility.cs`、`Roles/Ability/JSidekickAbility.cs`、`Modules/ExPlayerControl.cs`、`Modules/CheckEndGame.cs` | SNRのAbility基盤をtempMODのホスト権限`RoleEngine`へ適合。勧誘対象・専用クールダウン・1人上限・チーム可視性・相互キル禁止・親死亡時昇格・他キラー陣営を除外する勝利条件を移行した。`PlayerControl`の追加／複製やSpawn RPCは使用しない。 |
+| アンダーテイカー | 第1段階移植・実機検証待ち | TownOfUs-Reworked `943c46200cd12b2772cfa883a1c1a37cf9c3bb35`（GPL-3.0） | `source/Patches/Roles/Undertaker.cs`、`source/Patches/ImpostorRoles/UndertakerMod/DragBody.cs`、`PerformKillButton.cs`、`KillButtonTarget.cs`、`PlayerControlUpdate.cs`、`UpdateSpeed.cs` | 死体の射程内選択、牽引中の追従・緑アウトライン・減速、配置、死亡／会議／ベント時の安全な自動配置をtempMODの`BodyState`とホスト同期へ適合した。実機で牽引表示・ベント・梯子の最終確認を待つ。 |
+| クリーナー | 第1段階移植・実機検証待ち | TownOfUs-Reworked `943c46200cd12b2772cfa883a1c1a37cf9c3bb35`（GPL-3.0） | `source/Patches/Roles/Janitor.cs`、`source/Patches/ImpostorRoles/JanitorMod/PerformKillButton.cs`、`KillButtonTarget.cs`、`PlayerControlUpdate.cs`、`Coroutine.cs` | 射程内死体だけを対象化し、清掃硬直中に移動を止め、清掃進捗をホスト確定で同期する。既存`DeadBody`は清掃中にフェードし、完了時に通報不能として無効化する。実機でフェード・硬直解除の最終確認を待つ。 |
+| マッドゲッサー | 第1段階移植・実機検証待ち | SuperNewRoles `713c98779e14000479f7578a28705264645f07e5`（GPL-3.0） | `Roles/Impostor/EvilGuesser.cs`、`Roles/Ability/GuesserAbility.cs`、`Events/GuesserShotEvent.cs`、`Roles/Ability/GuesserTrophies.cs` | 会議限定の対象選択、役職一覧、正誤による対象キル／自爆、会議ごとの残弾・上限・次会議での回復を`MeetingHud`互換UIとホスト同期へ適合した。推測ボタンは残り回数を表示する。ページング演出は後続段階で上流UIへ寄せる。 |
 
 > この表で「完全移植」と表記するものは、上流の役職単位の状態遷移・対象判定・会議／死亡処理・勝利判定を移植対象としていることを示します。異なるネットワーク層・Unity／IL2CPP版・プロジェクト構造に合わせた適合コードはtempMOD側で独自に記述し、上流ファイル、コミット、ライセンス、差分をこの表に追記します。
 

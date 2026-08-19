@@ -48,6 +48,12 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
     internal RoleEngine Engine => _engine;
 
+    /// <summary>牽引中のアンダーテイカーだけにTownOfUs由来の移動速度倍率を適用する。</summary>
+    internal float GetMovementSpeedMultiplier(PlayerControl? player)
+        => player != null && _assignmentReceived && _engine.IsUndertakerCarrying(player.PlayerId)
+            ? _engine.UndertakerSpeedMultiplier
+            : 1f;
+
     private sealed record ResultLine(string PlayerName, string ActionText, string RoleName);
 
     internal void OnGameStarted()
@@ -215,6 +221,14 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
         EnsureNativeRole(player);
 
+        // TownOfUsのUndertakerと同様に、死体を牽引したままベントへ入らせない。
+        // ホストだけがBodyStateを変更し、既存DeadBodyを現在位置へ安全に配置する。
+        if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost && player.inVent && _engine.IsUndertakerCarrying(player.PlayerId))
+        {
+            var ventPosition = player.GetTruePosition();
+            _engine.ForceDropCarriedBody(player.PlayerId, new Position(ventPosition.x, ventPosition.y), Time.time, "ベント進入");
+        }
+
         if (PlayerControl.LocalPlayer != null && player.PlayerId == PlayerControl.LocalPlayer.PlayerId && _engine.Players.TryGetValue(player.PlayerId, out var localState))
         {
             var mustFreeze = localState.ImmobilizedUntil > Time.time;
@@ -316,10 +330,13 @@ internal sealed class TempModRuntime : IRoleGameGateway
     internal bool CanUseMadGuesserInMeeting()
     {
         var local = PlayerControl.LocalPlayer;
-        return _assignmentReceived && _engine.IsMeetingActive && local != null &&
-               _engine.Players.TryGetValue(local.PlayerId, out var state) && state.IsAlive &&
-               state.PrimaryRole == RoleId.MadGuesser &&
-               (!state.AbilityCooldowns.TryGetValue(AbilityId.GuessRole, out var cooldown) || cooldown <= Time.time);
+        return _assignmentReceived && local != null && _engine.CanMadGuesserShoot(local.PlayerId);
+    }
+
+    internal int GetMadGuesserShotsRemaining()
+    {
+        var local = PlayerControl.LocalPlayer;
+        return local == null ? 0 : _engine.GetMadGuesserShotsRemaining(local.PlayerId);
     }
 
     internal bool TryUseMadGuesserGuess(byte targetId, RoleId guessedRole)
@@ -788,6 +805,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
                 writer.Write(carriedBodyOwnerId);
             writer.Write(player.RoleErasedOnDeath);
             writer.Write(player.SheriffKillsRemaining);
+            writer.Write(player.MadGuesserShotsThisMeeting);
             writer.Write((byte)player.AbilityCooldowns.Count);
             foreach (var cooldown in player.AbilityCooldowns)
             {
@@ -852,6 +870,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
             byte? carriedBodyOwnerId = reader.ReadBoolean() ? reader.ReadByte() : null;
             var roleErasedOnDeath = reader.ReadBoolean();
             var sheriffKillsRemaining = reader.ReadInt32();
+            var madGuesserShotsThisMeeting = reader.ReadInt32();
             var cooldowns = new Dictionary<AbilityId, float>();
             var cooldownCount = reader.ReadByte();
             for (var cooldownIndex = 0; cooldownIndex < cooldownCount; cooldownIndex++)
@@ -875,6 +894,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
                 EffectExpiresAt = effectExpiresAt,
                 EffectTargets = effectTargets,
                 EffectCounts = effectCounts,
+                MadGuesserShotsThisMeeting = madGuesserShotsThisMeeting,
                 SecondaryEffectTargetId = secondaryEffectTargetId,
                 ImmobilizedUntil = immobilizedUntil,
             });
@@ -1143,6 +1163,16 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
     private void ReconcileBodyVisuals()
     {
+        // TownOfUs JanitorのCoroutine.CleanCoroutineと同じ目的で、清掃中の既存DeadBodyをフェードさせる。
+        // 進捗はホスト確定のEffectTargets / EffectExpiresAtだけから復元し、クライアント側で独自状態を持たない。
+        var cleaningEndsAt = new Dictionary<byte, float>();
+        foreach (var cleaner in _engine.Players.Values)
+        {
+            if (cleaner.EffectTargets.TryGetValue(AbilityId.Clean, out var bodyOwnerId) &&
+                cleaner.EffectExpiresAt.TryGetValue(AbilityId.Clean, out var endsAt) && endsAt > Time.time)
+                cleaningEndsAt[bodyOwnerId] = endsAt;
+        }
+
         // 死体はPlayerControlやネットワーク参加者を複製せず、既存DeadBodyだけを役職エンジンの確定状態へ追従させる。
         foreach (var body in UnityEngine.Object.FindObjectsOfType<DeadBody>())
         {
@@ -1157,10 +1187,45 @@ internal sealed class TempModRuntime : IRoleGameGateway
                 continue;
             }
 
-            if (!state.IsCarried && state.Position != Position.Zero)
-                body.transform.position = new Vector3(state.Position.X, state.Position.Y, body.transform.position.z);
+            if (state.IsCarried)
+            {
+                // TownOfUs DragBodyと同じく、牽引中の死体を運搬者の少し後ろへ既存DeadBodyとして追従させる。
+                // 新しいPlayerControlやネットワーク参加者は作成しない。
+                var carrier = _engine.Players.Values.FirstOrDefault(player => player.CarriedBodyOwnerId == body.ParentId);
+                var carrierControl = carrier is null ? null : FindPlayer(carrier.PlayerId);
+                if (carrierControl != null)
+                {
+                    var carrierPosition = carrierControl.transform.position;
+                    body.transform.position = new Vector3(carrierPosition.x - .18f, carrierPosition.y - .36f, body.transform.position.z);
+                }
+                if (body.bodyRenderers != null)
+                {
+                    foreach (var renderer in body.bodyRenderers)
+                    {
+                        if (renderer == null) continue;
+                        renderer.material.SetColor("_OutlineColor", Color.green);
+                        renderer.material.SetFloat("_Outline", 1f);
+                    }
+                }
+            }
+            else
+            {
+                if (state.Position != Position.Zero)
+                    body.transform.position = new Vector3(state.Position.X, state.Position.Y, body.transform.position.z);
+                if (body.bodyRenderers != null)
+                {
+                    foreach (var renderer in body.bodyRenderers)
+                    {
+                        if (renderer != null)
+                            renderer.material.SetFloat("_Outline", 0f);
+                    }
+                }
+            }
 
             var isInvisible = state.InvisibleUntil > Time.time;
+            var cleanFade = cleaningEndsAt.TryGetValue(body.ParentId, out var cleanEndsAt)
+                ? Mathf.Clamp01((cleanEndsAt - Time.time) / Mathf.Max(.1f, _engine.CleanerDuration))
+                : 1f;
             if (body.bloodSplatter != null)
                 body.bloodSplatter.enabled = !isInvisible;
             if (body.bodyRenderers != null)
@@ -1168,7 +1233,12 @@ internal sealed class TempModRuntime : IRoleGameGateway
                 foreach (var renderer in body.bodyRenderers)
                 {
                     if (renderer != null)
+                    {
                         renderer.enabled = !isInvisible;
+                        var color = renderer.color;
+                        color.a = isInvisible ? 0f : cleanFade;
+                        renderer.color = color;
+                    }
                 }
             }
         }

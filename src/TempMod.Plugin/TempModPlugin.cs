@@ -235,6 +235,18 @@ internal static class AbilityButtonDoClickPatch
     }
 }
 
+[HarmonyPatch(typeof(PlayerPhysics), "get_SpeedMod")]
+internal static class PlayerPhysicsGetSpeedModPatch
+{
+    private static void Postfix(PlayerPhysics __instance, ref float __result)
+    {
+        // TownOfUsのUpdateSpeedと同じく、通常の速度計算後に牽引中だけ倍率を掛ける。
+        // Rigidbodyの速度や梯子状態を直接書き換えないため、本体の移動状態へ干渉しない。
+        if (__instance?.myPlayer != null)
+            __result *= TempModPlugin.Runtime.GetMovementSpeedMultiplier(__instance.myPlayer);
+    }
+}
+
 [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.FixedUpdate))]
 internal static class PlayerControlFixedUpdatePatch
 {

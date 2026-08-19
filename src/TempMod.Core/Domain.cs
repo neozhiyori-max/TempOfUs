@@ -227,6 +227,8 @@ public sealed class RoleOptions
     public bool SheriffCanKillNeutrals { get; init; } = true;
     public float StandardKillCooldown { get; init; } = 25f;
     public float NinjaKillCooldown { get; init; } = 40f;
+    /// <summary>SuperNewRolesのEvilGuesserShotsPerMeetingに対応する、会議ごとの推測回数。</summary>
+    public int MadGuesserShotsPerMeeting { get; init; } = 1;
     public float MadScientistDuration { get; init; } = 5f;
     public float MadScientistCooldown { get; init; } = 45f;
     public float TrackerDuration { get; init; } = 10f;
@@ -284,6 +286,8 @@ public sealed class PlayerState
     public bool RoleErasedOnDeath { get; set; }
     public float NextKillAt { get; set; }
     public int SheriffKillsRemaining { get; set; }
+    /// <summary>現在の会議で消費したマッドゲッサーの推測回数。</summary>
+    public int MadGuesserShotsThisMeeting { get; set; }
     public Dictionary<AbilityId, float> AbilityCooldowns { get; } = new();
     public Dictionary<AbilityId, float> EffectExpiresAt { get; } = new();
     public Dictionary<AbilityId, byte> EffectTargets { get; } = new();
@@ -314,6 +318,10 @@ public sealed record ReplicatedPlayerState(
     int SheriffKillsRemaining,
     IReadOnlyDictionary<AbilityId, float> AbilityCooldowns)
 {
+    /// <summary>現在の会議で消費したマッドゲッサーの推測回数。</summary>
+    public int MadGuesserShotsThisMeeting { get; init; }
+
+    // 既存の初期化子と互換な拡張プロパティをこの位置に保持する。
     public IReadOnlyDictionary<AbilityId, float> EffectExpiresAt { get; init; } = new Dictionary<AbilityId, float>();
     public IReadOnlyDictionary<AbilityId, byte> EffectTargets { get; init; } = new Dictionary<AbilityId, byte>();
     public IReadOnlyDictionary<AbilityId, int> EffectCounts { get; init; } = new Dictionary<AbilityId, int>();
