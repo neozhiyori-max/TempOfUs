@@ -22,7 +22,7 @@ tempMODは、独自の仕組みを増やすのではなく、**公開済みで�
 
 | 陣営 | tempMOD役職 | 区分 | 主な参照候補 | 移行時の要点 |
 |---|---|---|---|---|
-| クルー | シェリフ | 直接移植候補 | TOU `Sheriff.cs`、SNR `Sheriff.cs` | 誤射・キル回数・対象陣営の判定を移行する。 |
+| クルー | シェリフ | 第1段階移植・回帰確認済み | TOU `Sheriff.cs`、SNR `Sheriff.cs` | 誤射・キル回数・対象陣営の設定判定をホスト権限エンジンへ適合済み。敵のキル、クルー誤射時の自爆、第三陣営キル可否、上限回数をセルフテストで回帰確認する。 |
 | クルー | ドクター | 近縁移植候補 | TOU `Medic.cs` | 防御ではなく死亡時刻表示を独自補完し、死体対象処理は共有化する。 |
 | クルー | マッドサイエンティスト | 近縁移植候補 | バニラScientist／SNR能力基盤 | バイタル表示とクールダウンを標準端末UI再利用で安定化する。 |
 | クルー | トラッカー | 直接移植候補 | TOU `Tracker.cs` | 対象選択、矢印寿命、会議リセットを移行する。 |
@@ -61,13 +61,13 @@ tempMODは、独自の仕組みを増やすのではなく、**公開済みで�
 | 第三陣営 | 神（ゴッド） | 直接移植候補 | SNR `God.cs` | 全知UIとタスク生存勝利を分離する。 |
 | 第三陣営 | ジェスター | 直接移植候補 | TOU `Jester.cs`、SNR `Teruteru.cs` | 追放時勝利を会議終了処理で最優先する。 |
 | 第三陣営 | ジャッカル | 第1段階の完全移植 | SNR `JackalAbility.cs`、`CustomSidekickButtonAbility.cs`、`JSidekickAbility.cs` | 1人だけ勧誘、味方色、相互キル禁止、親死亡時昇格、他キラー陣営を残した誤勝利防止を移行する。正確なファイル別クレジットは次節を参照。 |
-| 第三陣営 | ヴァンパイア | 直接移植候補 | TOU/SNR `Vampire.cs` | 噛みつき遅延、会議中停止、死亡時解除を移行する。 |
+| 第三陣営 | ヴァンパイア | 第1段階移植・回帰確認済み | TOU/SNR `Vampire.cs` | 噛みつき遅延、会議中停止、死亡時解除をホスト権限エンジンへ適合済み。会議中は残り時間が停止し、会議終了後に正確な残り時間から再開する。 |
 | 第三陣営 | シュレディンガーの猫 | 直接移植候補 | SNR `SchrodingersCat.cs` | 最初の攻撃／投票での陣営同調を役職変更イベントで同期する。 |
 | 第三陣営 | ゾンビ | 独自補完 | 感染・従属状態の共通基盤 | 子ゾンビ化と勝利判定を専用陣営状態で管理する。 |
 | 第三陣営 | アパシー | 独自補完 | タスク削除の共通基盤 | 死亡方法別の勝敗を死亡イベントで判定する。 |
 | 第三陣営 | アドボケイト | 近縁移植候補 | 会議票数Ability基盤 | 買収対象の零票・自身二票を会議集計に限定する。 |
 | 第三陣営 | ピエロ | 近縁移植候補 | Jester系＋操作反転基盤 | 操作反転は短時間入力効果として実装する。 |
-| 第三陣営 | アルソニスト | 直接移植候補 | TOU/SNR `Arsonist.cs` | 注油、会議リセット、全対象後の点火を移行する。 |
+| 第三陣営 | アルソニスト | 第1段階移植・回帰確認済み | TOU/SNR `Arsonist.cs` | 生存者への注油、全対象への注油完了後の点火、即時勝利をホスト権限エンジンへ適合済み。注油進捗は会議後も同期状態として保持される。 |
 | 第三陣営 | テロリスト | 近縁移植候補 | SNR `SelfBomber.cs` | 自爆範囲と対象陣営判定を分離する。 |
 | 第三陣営 | ハゲタカ | 直接移植候補 | SNR `Vulture.cs` | 死体回収数と勝利条件を死体状態と同期する。 |
 | 第三陣営 | コレクター | 独自補完 | アイテム／タスク進捗基盤 | タスク妨害と収集数を明示的な状態値で同期する。 |
@@ -87,6 +87,10 @@ tempMODは、独自の仕組みを増やすのではなく、**公開済みで�
 | アンダーテイカー | 第1段階移植・実機検証待ち | TownOfUs-Reworked `943c46200cd12b2772cfa883a1c1a37cf9c3bb35`（GPL-3.0） | `source/Patches/Roles/Undertaker.cs`、`source/Patches/ImpostorRoles/UndertakerMod/DragBody.cs`、`PerformKillButton.cs`、`KillButtonTarget.cs`、`PlayerControlUpdate.cs`、`UpdateSpeed.cs` | 死体の射程内選択、牽引中の追従・緑アウトライン・減速、配置、死亡／会議／ベント時の安全な自動配置をtempMODの`BodyState`とホスト同期へ適合した。実機で牽引表示・ベント・梯子の最終確認を待つ。 |
 | クリーナー | 第1段階移植・実機検証待ち | TownOfUs-Reworked `943c46200cd12b2772cfa883a1c1a37cf9c3bb35`（GPL-3.0） | `source/Patches/Roles/Janitor.cs`、`source/Patches/ImpostorRoles/JanitorMod/PerformKillButton.cs`、`KillButtonTarget.cs`、`PlayerControlUpdate.cs`、`Coroutine.cs` | 射程内死体だけを対象化し、清掃硬直中に移動を止め、清掃進捗をホスト確定で同期する。既存`DeadBody`は清掃中にフェードし、完了時に通報不能として無効化する。実機でフェード・硬直解除の最終確認を待つ。 |
 | マッドゲッサー | 第1段階移植・実機検証待ち | SuperNewRoles `713c98779e14000479f7578a28705264645f07e5`（GPL-3.0） | `Roles/Impostor/EvilGuesser.cs`、`Roles/Ability/GuesserAbility.cs`、`Events/GuesserShotEvent.cs`、`Roles/Ability/GuesserTrophies.cs` | 会議限定の対象選択、役職一覧、正誤による対象キル／自爆、会議ごとの残弾・上限・次会議での回復を`MeetingHud`互換UIとホスト同期へ適合した。推測ボタンは残り回数を表示する。ページング演出は後続段階で上流UIへ寄せる。 |
+| モーフィング | 第1段階移植・実機検証待ち | TownOfUs-Reworked `943c46200cd12b2772cfa883a1c1a37cf9c3bb35`（GPL-3.0） | `source/Patches/Roles/Morphling.cs`、`source/Patches/ImpostorRoles/MorphlingMod/HudManagerUpdate.cs`、`MorphUnmorph.cs`、`PerformKill.cs`、`SetTarget.cs` | DNA採取と時間制限は既存ホスト同期を使用し、変身中は`RawSetOutfit`で既存PlayerControlの見た目だけを対象の外見へ切替える。ネットワーク外見RPC・PlayerControl複製は使用せず、終了時に本人の外見へ復元する。 |
+| シェリフ | 第1段階移植・回帰確認済み | TownOfUs-Reworked `943c46200cd12b2772cfa883a1c1a37cf9c3bb35`（GPL-3.0） | `source/Patches/Roles/Sheriff.cs`、`source/Patches/CrewmateRoles/SheriffMod/` | 直接キル、クルー誤射時の自爆、ゲーム中のキル回数上限、第三陣営をキル可能にする設定を既存のホスト権限キル処理へ適合した。 |
+| ヴァンパイア | 第1段階移植・回帰確認済み | TownOfUs-Reworked `943c46200cd12b2772cfa883a1c1a37cf9c3bb35`（GPL-3.0） | `source/Patches/Roles/Vampire.cs`、`source/Patches/NeutralRoles/VampireMod/PerformKill.cs` | 噛みつきで確定した死亡予定時刻をホスト同期し、会議中は残り時間を停止、会議終了後に再開する。対象が先に死亡した場合は予定を解除する。 |
+| アルソニスト | 第1段階移植・回帰確認済み | SuperNewRoles `713c98779e14000479f7578a28705264645f07e5`（GPL-3.0） | `SuperNewRoles/Roles/Neutral/Arsonist.cs`、`SuperNewRoles/Roles/Ability/ArsonistAbility.cs` | 生存者全員へ注油するまで点火を拒否し、達成後はホストが対象全員を点火キルして単独勝利を確定する。注油済み状態は会議をまたいで維持する。 |
 
 > この表で「完全移植」と表記するものは、上流の役職単位の状態遷移・対象判定・会議／死亡処理・勝利判定を移植対象としていることを示します。異なるネットワーク層・Unity／IL2CPP版・プロジェクト構造に合わせた適合コードはtempMOD側で独自に記述し、上流ファイル、コミット、ライセンス、差分をこの表に追記します。
 

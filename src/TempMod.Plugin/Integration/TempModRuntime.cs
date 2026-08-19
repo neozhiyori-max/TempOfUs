@@ -29,6 +29,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
     private bool _introRoleLogged;
     private readonly HashSet<byte> _nativeRolesApplied = new();
     private readonly HashSet<byte> _movementFrozenByTempMod = new();
+    private readonly HashSet<byte> _morphVisualsApplied = new();
     private readonly List<ResultLine> _resultLines = new();
     private string? _victoryLabel;
     private bool _resultSentToChat;
@@ -258,6 +259,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
             // SuperNewRolesのKnowOtherAbilityと同じ目的で、ジャッカル／サイドキック間だけ名前を赤く表示する。
             // 会議・役職同期・本体の表示更新で色が戻るため、ローカル視点の確定状態に基づき毎フレーム再適用する。
             ApplyJackalTeamNameColors();
+            ApplyMorphVisuals();
             ShowRoleDescriptionChatIfNeeded(player);
             ShowOmniscienceIfNeeded(player);
             if (Input.GetKeyDown(KeyCode.F))
@@ -985,6 +987,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
         _assignmentReceived = false;
         _nativeRolesApplied.Clear();
         _movementFrozenByTempMod.Clear();
+        _morphVisualsApplied.Clear();
         _resultLines.Clear();
         _victoryLabel = null;
         _resultSentToChat = false;
@@ -1159,6 +1162,42 @@ internal sealed class TempModRuntime : IRoleGameGateway
             .Select(player => $"{player.PlayerName}: {RoleCatalog.Get(player.PrimaryRole).DisplayName}");
         HudManager.Instance?.ShowPopUp("<color=#FFE76A>全知</color>\n" + string.Join("\n", lines));
         _omniscienceShown = true;
+    }
+
+    /// <summary>
+    /// TownOfUs MorphlingのMorph / Unmorphと同じ目的で、EffectTargetsに同期された対象の外見を既存PlayerControlへ表示する。
+    /// SetOutfit系のネットワークRPCは使わず、各クライアントがホスト確定の状態を再現するため、他プレイヤーの外見データを改変しない。
+    /// </summary>
+    private void ApplyMorphVisuals()
+    {
+        var activeMorphs = new HashSet<byte>();
+        foreach (var state in _engine.Players.Values)
+        {
+            if (state.PrimaryRole != RoleId.Morphing ||
+                !state.EffectExpiresAt.TryGetValue(AbilityId.Morph, out var endsAt) || endsAt <= Time.time ||
+                !state.EffectTargets.TryGetValue(AbilityId.Morph, out var targetId))
+                continue;
+
+            var morphingPlayer = FindPlayer(state.PlayerId);
+            var targetPlayer = FindPlayer(targetId);
+            if (morphingPlayer?.Data == null || targetPlayer?.Data == null)
+                continue;
+
+            // RawSetOutfitはローカルな見た目だけを更新する。本体のDataやネットワーク役職は変更しない。
+            morphingPlayer.RawSetOutfit(targetPlayer.Data.DefaultOutfit, PlayerOutfitType.Default);
+            activeMorphs.Add(state.PlayerId);
+        }
+
+        // 変身時間が切れたプレイヤーは本人のDefaultOutfitへ一度だけ戻す。
+        foreach (var playerId in _morphVisualsApplied.Where(playerId => !activeMorphs.Contains(playerId)).ToArray())
+        {
+            var player = FindPlayer(playerId);
+            if (player?.Data != null)
+                player.RawSetOutfit(player.Data.DefaultOutfit, PlayerOutfitType.Default);
+        }
+
+        _morphVisualsApplied.Clear();
+        _morphVisualsApplied.UnionWith(activeMorphs);
     }
 
     private void ReconcileBodyVisuals()

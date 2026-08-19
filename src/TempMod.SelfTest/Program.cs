@@ -6,6 +6,7 @@ var tests = new (string Name, Action Run)[]
     ("シェリフはクルーを誤射すると自爆する", SheriffMisfire),
     ("バリアは一回だけキルを防ぐ", BarrierBlocksKill),
     ("ヴァンパイアは時間差で死亡させる", VampireBite),
+    ("ヴァンパイアの噛みつきタイマーは会議中に停止する", VampireBiteTimerPausesDuringMeeting),
     ("ラバーズは後追いする", LoversDieTogether),
     ("市長は二票を持つ", MayorHasDoubleVote),
     ("シェリフのキル回数上限を守る", SheriffKillLimit),
@@ -40,6 +41,7 @@ var tests = new (string Name, Action Run)[]
     ("マッドゲッサーは会議中の誤答で自爆する", MadGuesserDiesOnWrongGuess),
     ("アドボケイトの買収は自分を二票、対象を零票にする", AdvocateBribeChangesVoteWeight),
     ("アルソニストは全員への注油後に点火で勝利する", ArsonistIgnitesAllDousedPlayers),
+    ("アルソニストの注油進捗は会議後も保持する", ArsonistDouseProgressPersistsThroughMeeting),
 };
 
 var failed = 0;
@@ -123,6 +125,21 @@ static void VampireBite()
     Assert(!engine.Players[2].IsAlive);
 }
 
+static void VampireBiteTimerPausesDuringMeeting()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Vampire);
+    engine.AssignRole(2, RoleId.Crewmate);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Bite, 2, null, 2), 2));
+    engine.StartMeeting(3);
+    engine.Tick(6);
+    Assert(engine.Players[2].IsAlive);
+    engine.EndMeeting(null, 7, evaluateVictory: false);
+    engine.Tick(7.9f);
+    Assert(engine.Players[2].IsAlive);
+    engine.Tick(8);
+    Assert(!engine.Players[2].IsAlive);
+}
 static void LoversDieTogether()
 {
     var (engine, _) = CreateEngine();
@@ -552,8 +569,21 @@ static void ArsonistIgnitesAllDousedPlayers()
     Assert(gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.Victory && gameEvent.Detail == VictoryKind.Arsonist.ToString()));
 }
 
+static void ArsonistDouseProgressPersistsThroughMeeting()
+{
+    var (engine, gateway) = CreateEngine();
+    engine.AssignRole(1, RoleId.Arsonist);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.AssignRole(3, RoleId.Crewmate);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Douse, 2, null, 2), 2));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Douse, 3, null, 3), 3));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Douse, 4, null, 4), 4));
+    engine.StartMeeting(5);
+    engine.EndMeeting(null, 10, evaluateVictory: false);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Ignite, null, null, 11), 11));
+    Assert(gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.Victory && gameEvent.Detail == VictoryKind.Arsonist.ToString()));
+}
 static void Assert(bool condition)
-
 {
     if (!condition)
         throw new InvalidOperationException("期待した条件を満たしませんでした。");
