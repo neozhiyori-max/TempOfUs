@@ -1,0 +1,26 @@
+# Build outputs
+**/bin/
+**/obj/
+dist/
+.cache/
+
+# Local game references and reverse-engineering working files
+game_refs/
+ReferenceMods/
+reference_nebula/
+reference_snr/
+video_*_analysis_*.md
+nebula_ui_video_analysis.md
+
+# BepInEx/game-generated files
+BepInEx/
+*.log
+
+# Editor and operating-system files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db

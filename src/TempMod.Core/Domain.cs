@@ -1,0 +1,247 @@
+using System.Numerics;
+
+namespace TempMod.Core;
+
+public enum Faction : byte
+{
+    Crew = 0,
+    Impostor = 1,
+    Neutral = 2,
+}
+
+public enum RoleId : byte
+{
+    Crewmate = 0,
+    Impostor = 1,
+    Sheriff,
+    Doctor,
+    MadScientist,
+    Tracker,
+    TimeTraveler,
+    Seer,
+    BarrierNic,
+    LightWorker,
+    Investigator,
+    Mayor,
+    Ninja,
+    Warlock,
+    Mafia,
+    Puppeteer,
+    Eraser,
+    Undertaker,
+    Jester,
+    Jackal,
+    Vampire,
+}
+
+public enum ModifierId : byte
+{
+    Lovers = 1,
+}
+
+public enum AbilityId : byte
+{
+    Kill = 1,
+    OpenVitals,
+    Track,
+    TimeWarp,
+    SpeakWithDead,
+    GrantBarrier,
+    Curse,
+    Sabotage,
+    Puppet,
+    EraseKill,
+    CarryBody,
+    DropBody,
+    Bite,
+}
+
+public enum GameEventKind : byte
+{
+    AbilityAccepted = 1,
+    AbilityRejected,
+    PlayerDied,
+    BarrierConsumed,
+    CurseApplied,
+    CurseTriggered,
+    BiteApplied,
+    TimeWarped,
+    TrackingStarted,
+    VitalsOpened,
+    BarrierGranted,
+    BodyCarried,
+    BodyDropped,
+    RoleErased,
+    LoversPaired,
+    LoversTriggered,
+    Victory,
+}
+
+public enum VictoryKind : byte
+{
+    None = 0,
+    Jester,
+    Lovers,
+    Jackal,
+    Vampire,
+    Impostors,
+    Crewmates,
+}
+
+public readonly record struct Position(float X, float Y)
+{
+    public static readonly Position Zero = new(0, 0);
+
+    public float DistanceTo(Position other)
+    {
+        var dx = X - other.X;
+        var dy = Y - other.Y;
+        return MathF.Sqrt(dx * dx + dy * dy);
+    }
+
+    public Vector2 ToVector2() => new(X, Y);
+}
+
+public sealed record RoleDefinition(
+    RoleId Id,
+    string DisplayName,
+    Faction Faction,
+    bool CanDirectKill,
+    bool IsKillerNeutral = false,
+    bool IsModifier = false);
+
+public sealed class RoleOptions
+{
+    public int SheriffKillLimit { get; init; } = 1;
+    public bool SheriffCanKillNeutrals { get; init; } = true;
+    public float StandardKillCooldown { get; init; } = 25f;
+    public float NinjaKillCooldown { get; init; } = 40f;
+    public float MadScientistDuration { get; init; } = 5f;
+    public float MadScientistCooldown { get; init; } = 45f;
+    public float TrackerDuration { get; init; } = 10f;
+    public float TrackerCooldown { get; init; } = 30f;
+    public float TimeTravelerSeconds { get; init; } = 5f;
+    public float TimeTravelerCooldown { get; init; } = 35f;
+    public float SeerDuration { get; init; } = 8f;
+    public float SeerCooldown { get; init; } = 40f;
+    public float BarrierCooldown { get; init; } = 35f;
+    public float WarlockDuration { get; init; } = 12f;
+    public float WarlockCooldown { get; init; } = 30f;
+    public float PuppeteerDuration { get; init; } = 5f;
+    public float PuppeteerCooldown { get; init; } = 35f;
+    public float VampireDelay { get; init; } = 10f;
+    public float VampireCooldown { get; init; } = 30f;
+    public float JackalKillCooldown { get; init; } = 30f;
+    public float InvestigatorTrailLifetime { get; init; } = 6f;
+    public float FootprintInterval { get; init; } = .5f;
+    public float PositionHistoryInterval { get; init; } = .25f;
+    public float KillDistance { get; init; } = 2.0f;
+    public float CurseDistance { get; init; } = 1.2f;
+    public float UndertakerSpeedMultiplier { get; init; } = .7f;
+    public bool VampireTimerPausesDuringMeeting { get; init; } = true;
+}
+
+public sealed class PlayerState
+{
+    public byte PlayerId { get; init; }
+    public string PlayerName { get; init; } = string.Empty;
+    public RoleId PrimaryRole { get; set; } = RoleId.Crewmate;
+    public HashSet<ModifierId> Modifiers { get; } = new();
+    public bool IsAlive { get; set; } = true;
+    public Position Position { get; set; } = Position.Zero;
+    public bool HasBarrier { get; set; }
+    public bool IsCursed { get; set; }
+    public float CurseExpiresAt { get; set; }
+    public float BiteExpiresAt { get; set; }
+    public byte? PuppetControllerId { get; set; }
+    public float PuppetExpiresAt { get; set; }
+    public byte? CarriedBodyOwnerId { get; set; }
+    public bool RoleErasedOnDeath { get; set; }
+    public float NextKillAt { get; set; }
+    public int SheriffKillsRemaining { get; set; }
+    public Dictionary<AbilityId, float> AbilityCooldowns { get; } = new();
+    public Queue<PositionSample> PositionHistory { get; } = new();
+
+    public bool HasModifier(ModifierId modifier) => Modifiers.Contains(modifier);
+}
+
+public readonly record struct PositionSample(float Time, Position Position);
+public readonly record struct BodyState(byte OwnerId, Position Position, float DiedAt, bool IsCarried, bool RoleErased);
+public readonly record struct ReplicatedPlayerState(
+    byte PlayerId,
+    string PlayerName,
+    RoleId PrimaryRole,
+    bool IsAlive,
+    Position Position,
+    bool HasBarrier,
+    bool IsCursed,
+    float CurseExpiresAt,
+    float BiteExpiresAt,
+    byte? PuppetControllerId,
+    float PuppetExpiresAt,
+    byte? CarriedBodyOwnerId,
+    bool RoleErasedOnDeath,
+    int SheriffKillsRemaining,
+    IReadOnlyDictionary<AbilityId, float> AbilityCooldowns);
+public readonly record struct Footprint(byte OwnerId, Position Position, float CreatedAt);
+
+public sealed record AbilityRequest(
+    byte SenderId,
+    AbilityId Ability,
+    byte? TargetId,
+    Position? RequestedPosition,
+    float SentAt);
+
+public sealed record GameEvent(
+    GameEventKind Kind,
+    float Time,
+    byte? ActorId = null,
+    byte? TargetId = null,
+    string? Detail = null,
+    Position? Position = null,
+    bool Silent = false,
+    IReadOnlyList<byte>? ParticipantIds = null);
+
+public sealed record VictoryResult(VictoryKind Kind, IReadOnlyList<byte> WinnerIds)
+{
+    public static readonly VictoryResult None = new(VictoryKind.None, Array.Empty<byte>());
+}
+
+public interface IRoleGameGateway
+{
+    bool IsWalkable(Position position);
+    void Emit(GameEvent gameEvent);
+}
+
+public static class RoleCatalog
+{
+    private static readonly IReadOnlyDictionary<RoleId, RoleDefinition> Definitions =
+        new Dictionary<RoleId, RoleDefinition>
+        {
+            [RoleId.Crewmate] = new(RoleId.Crewmate, "クルー", Faction.Crew, false),
+            [RoleId.Impostor] = new(RoleId.Impostor, "インポスター", Faction.Impostor, true),
+            [RoleId.Sheriff] = new(RoleId.Sheriff, "シェリフ", Faction.Crew, true),
+            [RoleId.Doctor] = new(RoleId.Doctor, "ドクター", Faction.Crew, false),
+            [RoleId.MadScientist] = new(RoleId.MadScientist, "マッドサイエンティスト", Faction.Crew, false),
+            [RoleId.Tracker] = new(RoleId.Tracker, "トラッカー", Faction.Crew, false),
+            [RoleId.TimeTraveler] = new(RoleId.TimeTraveler, "タイムトラベラー", Faction.Crew, false),
+            [RoleId.Seer] = new(RoleId.Seer, "シーア", Faction.Crew, false),
+            [RoleId.BarrierNic] = new(RoleId.BarrierNic, "バリアニック", Faction.Crew, false),
+            [RoleId.LightWorker] = new(RoleId.LightWorker, "ライトワーカー", Faction.Crew, false),
+            [RoleId.Investigator] = new(RoleId.Investigator, "インベスティゲーター", Faction.Crew, false),
+            [RoleId.Mayor] = new(RoleId.Mayor, "市長", Faction.Crew, false),
+            [RoleId.Ninja] = new(RoleId.Ninja, "ニンジャ", Faction.Impostor, true),
+            [RoleId.Warlock] = new(RoleId.Warlock, "ウォーロック", Faction.Impostor, true),
+            [RoleId.Mafia] = new(RoleId.Mafia, "マフィア", Faction.Impostor, false),
+            [RoleId.Puppeteer] = new(RoleId.Puppeteer, "パペッティア", Faction.Impostor, true),
+            [RoleId.Eraser] = new(RoleId.Eraser, "イレイザー", Faction.Impostor, true),
+            [RoleId.Undertaker] = new(RoleId.Undertaker, "アンダーテイカー", Faction.Impostor, true),
+            [RoleId.Jester] = new(RoleId.Jester, "ジェスター", Faction.Neutral, false),
+            [RoleId.Jackal] = new(RoleId.Jackal, "ジャッカル", Faction.Neutral, true, IsKillerNeutral: true),
+            [RoleId.Vampire] = new(RoleId.Vampire, "ヴァンパイア", Faction.Neutral, true, IsKillerNeutral: true),
+        };
+
+    public static RoleDefinition Get(RoleId role) => Definitions[role];
+    public static Faction GetFaction(RoleId role) => Get(role).Faction;
+    public static bool IsKillerNeutral(RoleId role) => Get(role).IsKillerNeutral;
+}

@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>TempMod</AssemblyName>
+    <RootNamespace>TempMod.Plugin</RootNamespace>
+    <AmongUsRoot Condition="'$(AmongUsRoot)' == ''">D:\SteamLibrary\steamapps\common\TEMPMOD</AmongUsRoot>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(AdminBuild)' == 'true'">
+    <AssemblyName>TempMod.Admin</AssemblyName>
+    <DefineConstants>$(DefineConstants);TEMPMOD_ADMIN</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TempMod.Core\TempMod.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="BepInEx.Core"><HintPath>$(AmongUsRoot)\BepInEx\core\BepInEx.Core.dll</HintPath></Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP"><HintPath>$(AmongUsRoot)\BepInEx\core\BepInEx.Unity.IL2CPP.dll</HintPath></Reference>
+    <Reference Include="0Harmony"><HintPath>$(AmongUsRoot)\BepInEx\core\0Harmony.dll</HintPath></Reference>
+    <Reference Include="Il2CppInterop.Runtime"><HintPath>$(AmongUsRoot)\BepInEx\core\Il2CppInterop.Runtime.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(AmongUsRoot)\BepInEx\interop\UnityEngine.CoreModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(AmongUsRoot)\BepInEx\interop\UnityEngine.ImageConversionModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.UIModule"><HintPath>$(AmongUsRoot)\BepInEx\interop\UnityEngine.UIModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(AmongUsRoot)\BepInEx\interop\UnityEngine.TextRenderingModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(AmongUsRoot)\BepInEx\interop\UnityEngine.InputLegacyModule.dll</HintPath></Reference>
+    <Reference Include="Unity.TextMeshPro"><HintPath>$(AmongUsRoot)\BepInEx\interop\Unity.TextMeshPro.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(AmongUsRoot)\BepInEx\interop\UnityEngine.UI.dll</HintPath></Reference>
+    <Reference Include="Assembly-CSharp"><HintPath>$(AmongUsRoot)\BepInEx\interop\Assembly-CSharp.dll</HintPath></Reference>
+    <Reference Include="Hazel"><HintPath>$(AmongUsRoot)\BepInEx\interop\Hazel.dll</HintPath></Reference>
+    <Reference Include="Il2Cppmscorlib"><HintPath>$(AmongUsRoot)\BepInEx\interop\Il2Cppmscorlib.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\assets\tempofus_logo.png" Link="Assets\tempofus_logo.png" />
+  </ItemGroup>
+
+  <Target Name="CopyPluginToGame" AfterTargets="Build" Condition="Exists('$(AmongUsRoot)\BepInEx\plugins')">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(AmongUsRoot)\BepInEx\plugins" />
+  </Target>
+</Project>
