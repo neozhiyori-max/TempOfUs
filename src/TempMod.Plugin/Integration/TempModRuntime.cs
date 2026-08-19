@@ -31,6 +31,10 @@ internal sealed class TempModRuntime : IRoleGameGateway
     private readonly List<ResultLine> _resultLines = new();
     private string? _victoryLabel;
     private bool _resultSentToChat;
+    private bool _omniscienceShown;
+    private AbilityId _armedMeetingAbility;
+    private RoleId _meetingGuessRole = RoleId.Sheriff;
+    private bool _roleDescriptionChatShown;
 
     internal TempModRuntime(ManualLogSource log, TempModSettings settings)
     {
@@ -54,6 +58,8 @@ internal sealed class TempModRuntime : IRoleGameGateway
         }
         _engine = new RoleEngine(this, _settings.CreateRoleOptions());
         _introRoleLogged = false;
+        _omniscienceShown = false;
+        _roleDescriptionChatShown = false;
         _log.LogInfo("tempMOD: PlayerControl.OnGameStart を受信しました。開始演出で役職を確定します。");
     }
 
@@ -160,6 +166,8 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
     internal void OnMeetingClosed()
     {
+        // 会議専用能力を構えたまま閉じても、次の会議へ対象待機状態を持ち越さない。
+        _armedMeetingAbility = 0;
         // 追放対象の確定処理はMeetingHudの投票確定パッチから呼び出す。
         // 現段階では会議終了後の一時効果解除だけをRoleEngineに委譲する。
     }
@@ -174,6 +182,15 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
         EnsureNativeRole(player);
 
+        if (PlayerControl.LocalPlayer != null && player.PlayerId == PlayerControl.LocalPlayer.PlayerId && _engine.Players.TryGetValue(player.PlayerId, out var localState))
+        {
+            var mustFreeze = localState.ImmobilizedUntil > Time.time;
+            if (mustFreeze && player.moveable)
+                player.moveable = false;
+            else if (!mustFreeze && !player.moveable && localState.IsAlive)
+                player.moveable = true;
+        }
+
         // 開始演出のコルーチンが標準の役職名を書き戻すため、演出が開いている間は
         // ローカル役職表示を毎フレーム独自の確定役職で上書きする。
         if (PlayerControl.LocalPlayer != null && player.PlayerId == PlayerControl.LocalPlayer.PlayerId && IntroCutscene.Instance != null)
@@ -181,8 +198,14 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
         var position = player.GetTruePosition();
         _engine.UpdatePosition(player.PlayerId, new Position(position.x, position.y), Time.time);
-        if (PlayerControl.LocalPlayer != null && player.PlayerId == PlayerControl.LocalPlayer.PlayerId && Input.GetKeyDown(KeyCode.F))
-            TryUsePrimaryAbility(player);
+        if (PlayerControl.LocalPlayer != null && player.PlayerId == PlayerControl.LocalPlayer.PlayerId)
+        {
+            ReconcileBodyVisuals();
+            ShowRoleDescriptionChatIfNeeded(player);
+            ShowOmniscienceIfNeeded(player);
+            if (Input.GetKeyDown(KeyCode.F))
+                TryUsePrimaryAbility(player);
+        }
         if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
             _engine.Tick(Time.time);
     }
@@ -220,8 +243,8 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
         byte? targetId = ability switch
         {
-            AbilityId.Kill or AbilityId.Bite or AbilityId.EraseKill or AbilityId.Track or AbilityId.GrantBarrier or AbilityId.Curse or AbilityId.Puppet => FindNearestLivingPlayer(actor.PlayerId),
-            AbilityId.CarryBody => FindNearestBody(actor.PlayerId),
+            AbilityId.Kill or AbilityId.Bite or AbilityId.EraseKill or AbilityId.Track or AbilityId.GrantBarrier or AbilityId.Curse or AbilityId.Puppet or AbilityId.CollectDna or AbilityId.PlantBomb or AbilityId.Silence or AbilityId.RecruitSidekick or AbilityId.InfectKill or AbilityId.ConfusionGas or AbilityId.AbsoluteDefense or AbilityId.FanaticWorship or AbilityId.Assassinate or AbilityId.Douse => FindNearestLivingPlayer(actor.PlayerId),
+            AbilityId.CarryBody or AbilityId.Clean or AbilityId.Devour or AbilityId.AnimateBody or AbilityId.CollectBody => FindNearestBody(actor.PlayerId),
             AbilityId.SpeakWithDead => FindAnyDeadPlayer(),
             _ => null,
         };
@@ -230,6 +253,91 @@ internal sealed class TempModRuntime : IRoleGameGateway
             return _engine.TryHandleAbility(new AbilityRequest(actor.PlayerId, ability, targetId, state.Position, Time.time), Time.time);
 
         SendAbilityRequest(actor, ability, targetId ?? byte.MaxValue);
+        return true;
+    }
+
+    internal bool CanUseMadGuesserInMeeting()
+    {
+        var local = PlayerControl.LocalPlayer;
+        return _assignmentReceived && _engine.IsMeetingActive && local != null &&
+               _engine.Players.TryGetValue(local.PlayerId, out var state) && state.IsAlive &&
+               state.PrimaryRole == RoleId.MadGuesser &&
+               (!state.AbilityCooldowns.TryGetValue(AbilityId.GuessRole, out var cooldown) || cooldown <= Time.time);
+    }
+
+    internal bool TryUseMadGuesserGuess(byte targetId, RoleId guessedRole)
+    {
+        var local = PlayerControl.LocalPlayer;
+        if (!CanUseMadGuesserInMeeting() || local == null)
+            return false;
+        var payload = new Position((byte)guessedRole, 0);
+        if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
+            return _engine.TryHandleAbility(new AbilityRequest(local.PlayerId, AbilityId.GuessRole, targetId, payload, Time.time), Time.time);
+        SendAbilityRequest(local, AbilityId.GuessRole, targetId, payload);
+        return true;
+    }
+
+    internal bool TryGetMeetingAbilityButtonState(out AbilityButtonState state)
+    {
+        state = default;
+        var local = PlayerControl.LocalPlayer;
+        if (!_assignmentReceived || local == null || !_engine.IsMeetingActive || !_engine.Players.TryGetValue(local.PlayerId, out var player) || !player.IsAlive)
+            return false;
+
+        var ability = player.PrimaryRole switch
+        {
+            RoleId.Advocate => AbilityId.Bribe,
+            RoleId.Deceptor => AbilityId.DeceiveVote,
+            _ => (AbilityId)0,
+        };
+        if (ability == 0)
+            return false;
+
+        var label = ability == AbilityId.GuessRole
+            ? $"推測: {RoleCatalog.Get(_meetingGuessRole).DisplayName}"
+            : ability == AbilityId.Bribe ? "買収" : "票偽装";
+        var remaining = player.AbilityCooldowns.TryGetValue(ability, out var endsAt) ? Math.Max(0f, endsAt - Time.time) : 0f;
+        state = new AbilityButtonState(label, "能力ボタンを押してから投票パネルの対象を選択", remaining <= 0f, remaining, -1, RoleCatalog.Get(player.PrimaryRole).Faction == Faction.Impostor ? new Color(1f, .35f, .35f) : new Color(.82f, .48f, 1f));
+        return true;
+    }
+
+    internal bool ArmMeetingAbility()
+    {
+        var local = PlayerControl.LocalPlayer;
+        if (!TryGetMeetingAbilityButtonState(out _) || local == null || !_engine.Players.TryGetValue(local.PlayerId, out var state))
+            return false;
+        _armedMeetingAbility = state.PrimaryRole switch
+        {
+            RoleId.Advocate => AbilityId.Bribe,
+            RoleId.Deceptor => AbilityId.DeceiveVote,
+            _ => (AbilityId)0,
+        };
+        if (_armedMeetingAbility == AbilityId.GuessRole)
+        {
+            var crewRoles = TempModSettings.SelectableRoles.Where(role => RoleCatalog.GetFaction(role) == Faction.Crew).ToArray();
+            var index = Array.IndexOf(crewRoles, _meetingGuessRole);
+            _meetingGuessRole = crewRoles[(index + 1 + crewRoles.Length) % crewRoles.Length];
+            HudManager.Instance?.ShowPopUp($"<color=#FF6666>推測役職: {RoleCatalog.Get(_meetingGuessRole).DisplayName}</color>\n次に投票パネルから対象を選択してください。");
+        }
+        else
+        {
+            var action = _armedMeetingAbility == AbilityId.Bribe ? "買収" : "票偽装";
+            HudManager.Instance?.ShowPopUp($"<color=#D890FF>{action}を準備しました</color>\n次に投票パネルから対象を選択してください。");
+        }
+        return true;
+    }
+
+    internal bool TryConsumeMeetingAbilityVote(byte voterId, byte targetId)
+    {
+        var local = PlayerControl.LocalPlayer;
+        if (_armedMeetingAbility == 0 || local == null || voterId != local.PlayerId || !_engine.Players.TryGetValue(voterId, out var state))
+            return false;
+        var ability = _armedMeetingAbility;
+        _armedMeetingAbility = 0;
+        var payload = ability == AbilityId.GuessRole ? new Position((byte)_meetingGuessRole, 0) : (Position?)null;
+        if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
+            return _engine.TryHandleAbility(new AbilityRequest(voterId, ability, targetId, payload, Time.time), Time.time);
+        SendAbilityRequest(local, ability, targetId, payload);
         return true;
     }
 
@@ -264,13 +372,53 @@ internal sealed class TempModRuntime : IRoleGameGateway
             AbilityId.Puppet => "操作",
             AbilityId.Bite => "噛みつき",
             AbilityId.EraseKill => "消去キル",
+            AbilityId.Clean => "清掃",
+            AbilityId.GuessRole => "推測",
+            AbilityId.CollectDna => "遺伝子採取",
+            AbilityId.Morph => "変身",
+            AbilityId.MarionetteKill => "糸操作",
+            AbilityId.PlantBomb => "爆弾設置",
+            AbilityId.Wiretap => "盗聴",
+            AbilityId.SetTrap => "罠設置",
+            AbilityId.Blackout => "目隠し",
+            AbilityId.Phase => "幽体化",
+            AbilityId.CheckBounty => "ターゲット確認",
+            AbilityId.ReviveMinion => "従者蘇生",
+            AbilityId.Hack => "偽装工作",
+            AbilityId.CreateIllusion => "分身生成",
+            AbilityId.Silence => "口封じ",
+            AbilityId.Devour => "捕食",
+            AbilityId.StealTime => "時間強奪",
+            AbilityId.DeceiveVote => "票偽装",
+            AbilityId.AnimateBody => "死体操縦",
+            AbilityId.LinkCurse => "呪詛リンク",
+            AbilityId.AlchemyStealth => "錬金ステルス",
+            AbilityId.Omniscience => "全知",
+            AbilityId.RecruitSidekick => "陣営勧誘",
+            AbilityId.AlignFaction => "陣営同調",
+            AbilityId.InfectKill => "感染キル",
+            AbilityId.AbandonTasks => "タスク放棄",
+            AbilityId.Bribe => "買収",
+            AbilityId.ConfusionGas => "錯乱ガス",
+            AbilityId.Douse => "ガソリン噴霧",
+            AbilityId.Ignite => "点火",
+            AbilityId.SelfDestruct => "自爆",
+            AbilityId.CollectBody => "死体回収",
+            AbilityId.StealItem => "アイテム強奪",
+            AbilityId.AbsoluteDefense => "絶対防御",
+            AbilityId.FanaticWorship => "狂信",
+            AbilityId.StealSkin => "スキン強奪",
+            AbilityId.CaptureGhost => "幽霊捕獲",
+            AbilityId.ForceEject => "強制退場",
+            AbilityId.Spectate => "観戦モード",
+            AbilityId.Assassinate => "暗殺",
             _ => "キル",
         };
         var remaining = player.AbilityCooldowns.TryGetValue(ability, out var endsAt) ? Math.Max(0f, endsAt - Time.time) : 0f;
         var targetAvailable = ability switch
         {
-            AbilityId.Kill or AbilityId.Bite or AbilityId.EraseKill or AbilityId.Track or AbilityId.GrantBarrier or AbilityId.Curse or AbilityId.Puppet => FindNearestLivingPlayer(player.PlayerId) is not null,
-            AbilityId.CarryBody => FindNearestBody(player.PlayerId) is not null,
+            AbilityId.Kill or AbilityId.Bite or AbilityId.EraseKill or AbilityId.Track or AbilityId.GrantBarrier or AbilityId.Curse or AbilityId.Puppet or AbilityId.CollectDna or AbilityId.PlantBomb or AbilityId.Silence or AbilityId.RecruitSidekick or AbilityId.InfectKill or AbilityId.ConfusionGas or AbilityId.AbsoluteDefense or AbilityId.FanaticWorship or AbilityId.Assassinate or AbilityId.Douse => FindNearestLivingPlayer(player.PlayerId) is not null,
+            AbilityId.CarryBody or AbilityId.Clean or AbilityId.Devour or AbilityId.AnimateBody or AbilityId.CollectBody => FindNearestBody(player.PlayerId) is not null,
             AbilityId.SpeakWithDead => FindAnyDeadPlayer() is not null,
             _ => true,
         };
@@ -285,7 +433,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
         return true;
     }
 
-    private static AbilityId GetPrimaryAbility(PlayerState state) => state.PrimaryRole switch
+    private AbilityId GetPrimaryAbility(PlayerState state) => state.PrimaryRole switch
     {
         RoleId.MadScientist => AbilityId.OpenVitals,
         RoleId.Tracker => AbilityId.Track,
@@ -297,6 +445,45 @@ internal sealed class TempModRuntime : IRoleGameGateway
         RoleId.Seer => AbilityId.SpeakWithDead,
         RoleId.Vampire => AbilityId.Bite,
         RoleId.Eraser => AbilityId.EraseKill,
+        RoleId.Cleaner => AbilityId.Clean,
+        // マッドゲッサーは会議中のプレイヤー横「推測」ボタンだけを使用する。
+        RoleId.MadGuesser => (AbilityId)0,
+        RoleId.Morphing => state.AbilityCooldowns.ContainsKey(AbilityId.CollectDna) ? AbilityId.Morph : AbilityId.CollectDna,
+        RoleId.Marionette => AbilityId.MarionetteKill,
+        RoleId.Bomber => AbilityId.PlantBomb,
+        RoleId.Spy => AbilityId.Wiretap,
+        RoleId.Trapper => AbilityId.SetTrap,
+        RoleId.Blackout => AbilityId.Blackout,
+        RoleId.Phantom => AbilityId.Phase,
+        RoleId.BountyHunter => AbilityId.CheckBounty,
+        RoleId.VampireLord => AbilityId.ReviveMinion,
+        RoleId.Hacker => AbilityId.Hack,
+        RoleId.Illusionist => AbilityId.CreateIllusion,
+        RoleId.Silencer => AbilityId.Silence,
+        RoleId.Gluttony => AbilityId.Devour,
+        RoleId.TimeThief => AbilityId.StealTime,
+        RoleId.Deceptor => AbilityId.DeceiveVote,
+        RoleId.Necromancer => AbilityId.AnimateBody,
+        RoleId.Witch => AbilityId.LinkCurse,
+        RoleId.Alchemist => AbilityId.AlchemyStealth,
+        RoleId.God => AbilityId.Omniscience,
+        RoleId.Jackal => AbilityId.RecruitSidekick,
+        RoleId.SchrodingerCat => AbilityId.AlignFaction,
+        RoleId.Zombie => AbilityId.InfectKill,
+        RoleId.Apathy => AbilityId.AbandonTasks,
+        RoleId.Advocate => AbilityId.Bribe,
+        RoleId.Clown => AbilityId.ConfusionGas,
+        RoleId.Arsonist => _engine.Players.Values.Where(player => player.IsAlive && player.PlayerId != state.PlayerId).All(player => player.EffectTargets.TryGetValue(AbilityId.Douse, out var ownerId) && ownerId == state.PlayerId) ? AbilityId.Ignite : AbilityId.Douse,
+        RoleId.Terrorist => AbilityId.SelfDestruct,
+        RoleId.Vulture => AbilityId.CollectBody,
+        RoleId.Collector => AbilityId.StealItem,
+        RoleId.Guardian => AbilityId.AbsoluteDefense,
+        RoleId.Fanatic => AbilityId.FanaticWorship,
+        RoleId.Thief => AbilityId.StealSkin,
+        RoleId.GhostHunter => AbilityId.CaptureGhost,
+        RoleId.Bouncer => AbilityId.ForceEject,
+        RoleId.Spectator => AbilityId.Spectate,
+        RoleId.Assassin => AbilityId.Assassinate,
         _ when RoleCatalog.Get(state.PrimaryRole).CanDirectKill => AbilityId.Kill,
         _ => (AbilityId)0,
     };
@@ -329,6 +516,10 @@ internal sealed class TempModRuntime : IRoleGameGateway
         {
             RoleId.Vampire => AbilityId.Bite,
             RoleId.Eraser => AbilityId.EraseKill,
+            RoleId.Alchemist => AbilityId.AlchemyStealth,
+            RoleId.Thief => AbilityId.StealSkin,
+            RoleId.Zombie => AbilityId.InfectKill,
+            RoleId.Assassin => AbilityId.Assassinate,
             _ => AbilityId.Kill,
         };
 
@@ -400,6 +591,44 @@ internal sealed class TempModRuntime : IRoleGameGateway
             RoleId.Warlock => "  [F: 呪い]",
             RoleId.Puppeteer => "  [F: 操作支配]",
             RoleId.Undertaker => "  [F: 運搬／配置]",
+            RoleId.Cleaner => "  [F: 清掃]",
+            RoleId.MadGuesser => "  [F: 推測]",
+            RoleId.Morphing => "  [F: 遺伝子採取／変身]",
+            RoleId.Marionette => "  [F: 糸操作]",
+            RoleId.Bomber => "  [F: 爆弾設置]",
+            RoleId.Spy => "  [F: 盗聴]",
+            RoleId.Trapper => "  [F: 罠設置]",
+            RoleId.Blackout => "  [F: 目隠し]",
+            RoleId.Phantom => "  [F: 幽体化]",
+            RoleId.BountyHunter => "  [F: ターゲット確認]",
+            RoleId.VampireLord => "  [F: 従者蘇生]",
+            RoleId.Hacker => "  [F: 偽装工作]",
+            RoleId.Illusionist => "  [F: 分身生成]",
+            RoleId.Silencer => "  [F: 口封じ]",
+            RoleId.Gluttony => "  [F: 捕食]",
+            RoleId.TimeThief => "  [F: 時間強奪]",
+            RoleId.Deceptor => "  [F: 票偽装]",
+            RoleId.Necromancer => "  [F: 死体操縦]",
+            RoleId.Witch => "  [F: 呪詛リンク]",
+            RoleId.Alchemist => "  [F: 錬金ステルス]",
+            RoleId.God => "  [F: 全知]",
+            RoleId.Jackal => "  [F: キル／陣営勧誘]",
+            RoleId.SchrodingerCat => "  [F: 陣営同調]",
+            RoleId.Zombie => "  [F: 感染キル]",
+            RoleId.Apathy => "  [F: タスク放棄]",
+            RoleId.Advocate => "  [F: 買収]",
+            RoleId.Clown => "  [F: 錯乱ガス]",
+            RoleId.Arsonist => "  [F: ガソリン噴霧／点火]",
+            RoleId.Terrorist => "  [F: 自爆]",
+            RoleId.Vulture => "  [F: 死体回収]",
+            RoleId.Collector => "  [F: アイテム強奪]",
+            RoleId.Guardian => "  [F: 絶対防御]",
+            RoleId.Fanatic => "  [F: 狂信]",
+            RoleId.Thief => "  [F: スキン強奪]",
+            RoleId.GhostHunter => "  [F: 幽霊捕獲]",
+            RoleId.Bouncer => "  [F: 強制退場]",
+            RoleId.Spectator => "  [F: 観戦モード]",
+            RoleId.Assassin => "  [F: 暗殺]",
             _ => string.Empty,
         };
     }
@@ -426,7 +655,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
         }
     }
 
-    private void SendAbilityRequest(PlayerControl sender, AbilityId ability, byte targetId)
+    private void SendAbilityRequest(PlayerControl sender, AbilityId ability, byte targetId, Position? requestedPosition = null)
     {
         if (AmongUsClient.Instance == null || PlayerControl.LocalPlayer == null)
             return;
@@ -439,6 +668,12 @@ internal sealed class TempModRuntime : IRoleGameGateway
         writer.Write(sender.PlayerId);
         writer.Write((byte)ability);
         writer.Write(targetId);
+        writer.Write(requestedPosition is not null);
+        if (requestedPosition is Position position)
+        {
+            writer.Write(position.X);
+            writer.Write(position.Y);
+        }
         AmongUsClient.Instance.FinishRpcImmediately(writer);
     }
 
@@ -448,13 +683,14 @@ internal sealed class TempModRuntime : IRoleGameGateway
         var ability = (AbilityId)reader.ReadByte();
         var rawTargetId = reader.ReadByte();
         byte? targetId = rawTargetId == byte.MaxValue ? null : rawTargetId;
+        Position? requestedPosition = reader.ReadBoolean() ? new Position(reader.ReadSingle(), reader.ReadSingle()) : null;
         // RPC発信元のPlayerControlと要求者IDが一致しない要求は拒否する。
         if (source == null || source.PlayerId != senderId)
         {
             _log.LogWarning($"不正な能力要求を拒否しました: source={source?.PlayerId}, sender={senderId}");
             return;
         }
-        _engine.TryHandleAbility(new AbilityRequest(senderId, ability, targetId, null, Time.time), Time.time);
+        _engine.TryHandleAbility(new AbilityRequest(senderId, ability, targetId, requestedPosition, Time.time), Time.time);
     }
 
     private void BroadcastReplicatedState()
@@ -495,6 +731,28 @@ internal sealed class TempModRuntime : IRoleGameGateway
                 writer.Write((byte)cooldown.Key);
                 writer.Write(cooldown.Value);
             }
+            writer.Write((byte)player.EffectExpiresAt.Count);
+            foreach (var effect in player.EffectExpiresAt)
+            {
+                writer.Write((byte)effect.Key);
+                writer.Write(effect.Value);
+            }
+            writer.Write((byte)player.EffectTargets.Count);
+            foreach (var target in player.EffectTargets)
+            {
+                writer.Write((byte)target.Key);
+                writer.Write(target.Value);
+            }
+            writer.Write((byte)player.EffectCounts.Count);
+            foreach (var count in player.EffectCounts)
+            {
+                writer.Write((byte)count.Key);
+                writer.Write(count.Value);
+            }
+            writer.Write(player.SecondaryEffectTargetId is not null);
+            if (player.SecondaryEffectTargetId is byte secondaryTargetId)
+                writer.Write(secondaryTargetId);
+            writer.Write(player.ImmobilizedUntil);
         }
 
         writer.Write((byte)_engine.Bodies.Count);
@@ -506,6 +764,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
             writer.Write(body.DiedAt);
             writer.Write(body.IsCarried);
             writer.Write(body.RoleErased);
+            writer.Write(body.InvisibleUntil);
         }
         AmongUsClient.Instance.FinishRpcImmediately(writer);
     }
@@ -534,13 +793,34 @@ internal sealed class TempModRuntime : IRoleGameGateway
             var cooldownCount = reader.ReadByte();
             for (var cooldownIndex = 0; cooldownIndex < cooldownCount; cooldownIndex++)
                 cooldowns[(AbilityId)reader.ReadByte()] = reader.ReadSingle();
-            players.Add(new ReplicatedPlayerState(playerId, playerName, role, isAlive, position, hasBarrier, isCursed, curseExpiresAt, biteExpiresAt, puppetControllerId, puppetExpiresAt, carriedBodyOwnerId, roleErasedOnDeath, sheriffKillsRemaining, cooldowns));
+            var effectExpiresAt = new Dictionary<AbilityId, float>();
+            var effectCount = reader.ReadByte();
+            for (var effectIndex = 0; effectIndex < effectCount; effectIndex++)
+                effectExpiresAt[(AbilityId)reader.ReadByte()] = reader.ReadSingle();
+            var effectTargets = new Dictionary<AbilityId, byte>();
+            var effectTargetCount = reader.ReadByte();
+            for (var effectTargetIndex = 0; effectTargetIndex < effectTargetCount; effectTargetIndex++)
+                effectTargets[(AbilityId)reader.ReadByte()] = reader.ReadByte();
+            var effectCounts = new Dictionary<AbilityId, int>();
+            var effectCountCount = reader.ReadByte();
+            for (var effectCountIndex = 0; effectCountIndex < effectCountCount; effectCountIndex++)
+                effectCounts[(AbilityId)reader.ReadByte()] = reader.ReadInt32();
+            byte? secondaryEffectTargetId = reader.ReadBoolean() ? reader.ReadByte() : null;
+            var immobilizedUntil = reader.ReadSingle();
+            players.Add(new ReplicatedPlayerState(playerId, playerName, role, isAlive, position, hasBarrier, isCursed, curseExpiresAt, biteExpiresAt, puppetControllerId, puppetExpiresAt, carriedBodyOwnerId, roleErasedOnDeath, sheriffKillsRemaining, cooldowns)
+            {
+                EffectExpiresAt = effectExpiresAt,
+                EffectTargets = effectTargets,
+                EffectCounts = effectCounts,
+                SecondaryEffectTargetId = secondaryEffectTargetId,
+                ImmobilizedUntil = immobilizedUntil,
+            });
         }
 
         var bodies = new List<BodyState>();
         var bodyCount = reader.ReadByte();
         for (var index = 0; index < bodyCount; index++)
-            bodies.Add(new BodyState(reader.ReadByte(), new Position(reader.ReadSingle(), reader.ReadSingle()), reader.ReadSingle(), reader.ReadBoolean(), reader.ReadBoolean()));
+            bodies.Add(new BodyState(reader.ReadByte(), new Position(reader.ReadSingle(), reader.ReadSingle()), reader.ReadSingle(), reader.ReadBoolean(), reader.ReadBoolean(), reader.ReadSingle()));
         _engine.ApplyReplicatedState(players, bodies);
         _assignmentReceived = players.Count > 0;
         _log.LogDebug($"tempMOD: ホスト確定状態を受信しました。players={players.Count}, bodies={bodies.Count}");
@@ -669,6 +949,72 @@ internal sealed class TempModRuntime : IRoleGameGateway
         return players;
     }
 
+    private void ShowRoleDescriptionChatIfNeeded(PlayerControl localPlayer)
+    {
+        if (_roleDescriptionChatShown || !_assignmentReceived || HudManager.Instance?.Chat == null)
+            return;
+        if (!_engine.Players.TryGetValue(localPlayer.PlayerId, out var state))
+            return;
+
+        var definition = RoleCatalog.Get(state.PrimaryRole);
+        var color = definition.Faction switch
+        {
+            Faction.Crew => "#55D7FF",
+            Faction.Impostor => "#FF6666",
+            _ => "#D890FF",
+        };
+        var title = $"<color={color}>【あなたの役職: {definition.DisplayName}】</color>";
+        HudManager.Instance.Chat.AddChat(localPlayer, title + "\n" + RoleDescriptionCatalog.Get(state.PrimaryRole), false);
+        _roleDescriptionChatShown = true;
+    }
+
+    private void ShowOmniscienceIfNeeded(PlayerControl localPlayer)
+    {
+        if (_omniscienceShown || !_engine.Players.TryGetValue(localPlayer.PlayerId, out var localState) || localState.PrimaryRole != RoleId.God)
+            return;
+        if (!localState.EffectExpiresAt.ContainsKey(AbilityId.Omniscience))
+            return;
+
+        var lines = _engine.Players.Values
+            .OrderBy(player => player.PlayerId)
+            .Select(player => $"{player.PlayerName}: {RoleCatalog.Get(player.PrimaryRole).DisplayName}");
+        HudManager.Instance?.ShowPopUp("<color=#FFE76A>全知</color>\n" + string.Join("\n", lines));
+        _omniscienceShown = true;
+    }
+
+    private void ReconcileBodyVisuals()
+    {
+        // 死体はPlayerControlやネットワーク参加者を複製せず、既存DeadBodyだけを役職エンジンの確定状態へ追従させる。
+        foreach (var body in UnityEngine.Object.FindObjectsOfType<DeadBody>())
+        {
+            if (body == null || !_engine.Players.TryGetValue(body.ParentId, out var owner) || owner.IsAlive)
+                continue;
+
+            if (!_engine.Bodies.TryGetValue(body.ParentId, out var state))
+            {
+                // 清掃・捕食・回収済みの死体は無効化し、通報対象にならないようにする。
+                body.Reported = true;
+                body.gameObject.SetActive(false);
+                continue;
+            }
+
+            if (!state.IsCarried && state.Position != Position.Zero)
+                body.transform.position = new Vector3(state.Position.X, state.Position.Y, body.transform.position.z);
+
+            var isInvisible = state.InvisibleUntil > Time.time;
+            if (body.bloodSplatter != null)
+                body.bloodSplatter.enabled = !isInvisible;
+            if (body.bodyRenderers != null)
+            {
+                foreach (var renderer in body.bodyRenderers)
+                {
+                    if (renderer != null)
+                        renderer.enabled = !isInvisible;
+                }
+            }
+        }
+    }
+
     private static PlayerControl? FindPlayer(byte playerId)
     {
         foreach (var player in GetAllPlayers())
@@ -784,6 +1130,22 @@ internal sealed class TempModRuntime : IRoleGameGateway
         nameof(VictoryKind.Lovers) => "ラバーズ勝利",
         nameof(VictoryKind.Jackal) => "ジャッカル勝利",
         nameof(VictoryKind.Vampire) => "ヴァンパイア勝利",
+        nameof(VictoryKind.God) => "神（ゴッド）勝利",
+        nameof(VictoryKind.Zombie) => "ゾンビ陣営勝利",
+        nameof(VictoryKind.Apathy) => "アパシー勝利",
+        nameof(VictoryKind.Advocate) => "アドボケイト共同勝利",
+        nameof(VictoryKind.Clown) => "ピエロ共同勝利",
+        nameof(VictoryKind.Arsonist) => "アルソニスト勝利",
+        nameof(VictoryKind.Terrorist) => "テロリスト勝利",
+        nameof(VictoryKind.Vulture) => "ハゲタカ勝利",
+        nameof(VictoryKind.Collector) => "コレクター勝利",
+        nameof(VictoryKind.Guardian) => "ガーディアン勝利",
+        nameof(VictoryKind.Fanatic) => "ファナティック共同勝利",
+        nameof(VictoryKind.Thief) => "シーフ勝利",
+        nameof(VictoryKind.GhostHunter) => "ゴーストハンター勝利",
+        nameof(VictoryKind.Bouncer) => "バウンサー勝利",
+        nameof(VictoryKind.Spectator) => "スペクテイター共同勝利",
+        nameof(VictoryKind.Assassin) => "アサシン勝利",
         _ => "試合結果",
     };
 }

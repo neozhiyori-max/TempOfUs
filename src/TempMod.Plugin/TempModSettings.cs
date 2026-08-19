@@ -36,6 +36,16 @@ internal sealed class TempModSettings
     internal ConfigEntry<float> VampireDelay { get; }
     internal ConfigEntry<float> VampireCooldown { get; }
     internal ConfigEntry<float> JackalKillCooldown { get; }
+    internal ConfigEntry<float> SpecialAbilityCooldown { get; }
+    internal ConfigEntry<float> CleanerDuration { get; }
+    internal ConfigEntry<float> BombDelay { get; }
+    internal ConfigEntry<float> BombRadius { get; }
+    internal ConfigEntry<float> MorphDuration { get; }
+    internal ConfigEntry<float> BlackoutDuration { get; }
+    internal ConfigEntry<float> PhantomDuration { get; }
+    internal ConfigEntry<float> TrapDuration { get; }
+    internal ConfigEntry<float> SilenceDuration { get; }
+    internal ConfigEntry<float> AlchemyBodyStealthDuration { get; }
 
     internal TempModSettings(ConfigFile config)
     {
@@ -63,6 +73,16 @@ internal sealed class TempModSettings
         VampireDelay = config.Bind("能力: ヴァンパイア", "噛みつき後の死亡遅延", 10f, "秒単位です。");
         VampireCooldown = config.Bind("能力: ヴァンパイア", "噛みつきクールダウン", 30f, "秒単位です。");
         JackalKillCooldown = config.Bind("能力: ジャッカル", "キルクールダウン", 30f, "秒単位です。");
+        SpecialAbilityCooldown = config.Bind("能力: 追加役職共通", "基本クールダウン", 30f, "秒単位です。");
+        CleanerDuration = config.Bind("能力: クリーナー", "清掃硬直時間", 3f, "秒単位です。");
+        BombDelay = config.Bind("能力: ボマー", "爆発までの時間", 10f, "秒単位です。");
+        BombRadius = config.Bind("能力: ボマー", "爆発範囲", 2.5f, "距離単位です。");
+        MorphDuration = config.Bind("能力: モーフィング", "変身時間", 15f, "秒単位です。");
+        BlackoutDuration = config.Bind("能力: ブラックアウト", "目隠し時間", 8f, "秒単位です。");
+        PhantomDuration = config.Bind("能力: ファントム", "幽体化時間", 8f, "秒単位です。");
+        TrapDuration = config.Bind("能力: トラッパー", "罠持続時間", 15f, "秒単位です。");
+        SilenceDuration = config.Bind("能力: サイレンサー", "沈黙時間", 45f, "秒単位です。");
+        AlchemyBodyStealthDuration = config.Bind("能力: アルケミスト", "死体透明時間", 12f, "秒単位です。");
 
         foreach (var role in SelectableRoles)
         {
@@ -129,6 +149,18 @@ internal sealed class TempModSettings
             Detail(DetailSettingKey.VampireCooldown, "噛みつきクールダウン", Seconds(VampireCooldown.Value)),
         },
         RoleId.Jackal => new[] { Detail(DetailSettingKey.JackalKillCooldown, "キルクールダウン", Seconds(JackalKillCooldown.Value)) },
+        RoleId.Cleaner => new[] { Detail(DetailSettingKey.CleanerDuration, "清掃硬直時間", Seconds(CleanerDuration.Value)) },
+        RoleId.Bomber => new[]
+        {
+            Detail(DetailSettingKey.BombDelay, "爆発までの時間", Seconds(BombDelay.Value)),
+            Detail(DetailSettingKey.BombRadius, "爆発範囲", $"{BombRadius.Value:0.0}"),
+        },
+        RoleId.Morphing => new[] { Detail(DetailSettingKey.MorphDuration, "変身時間", Seconds(MorphDuration.Value)) },
+        RoleId.Blackout => new[] { Detail(DetailSettingKey.BlackoutDuration, "目隠し時間", Seconds(BlackoutDuration.Value)) },
+        RoleId.Phantom or RoleId.Spectator => new[] { Detail(DetailSettingKey.PhantomDuration, "効果時間", Seconds(PhantomDuration.Value)) },
+        RoleId.Trapper => new[] { Detail(DetailSettingKey.TrapDuration, "罠持続時間", Seconds(TrapDuration.Value)) },
+        RoleId.Silencer => new[] { Detail(DetailSettingKey.SilenceDuration, "沈黙時間", Seconds(SilenceDuration.Value)) },
+        RoleId.Alchemist => new[] { Detail(DetailSettingKey.AlchemyBodyStealthDuration, "死体透明時間", Seconds(AlchemyBodyStealthDuration.Value)) },
         _ => Array.Empty<RoleDetailRow>(),
     };
 
@@ -199,6 +231,15 @@ internal sealed class TempModSettings
             case DetailSettingKey.VampireDelay: VampireDelay.Value = AdjustSeconds(VampireDelay, delta); break;
             case DetailSettingKey.VampireCooldown: VampireCooldown.Value = AdjustSeconds(VampireCooldown, delta); break;
             case DetailSettingKey.JackalKillCooldown: JackalKillCooldown.Value = AdjustSeconds(JackalKillCooldown, delta); break;
+            case DetailSettingKey.CleanerDuration: CleanerDuration.Value = AdjustSeconds(CleanerDuration, delta); break;
+            case DetailSettingKey.BombDelay: BombDelay.Value = AdjustSeconds(BombDelay, delta); break;
+            case DetailSettingKey.BombRadius: BombRadius.Value = Math.Clamp(BombRadius.Value + delta * .5f, .5f, 10f); break;
+            case DetailSettingKey.MorphDuration: MorphDuration.Value = AdjustSeconds(MorphDuration, delta); break;
+            case DetailSettingKey.BlackoutDuration: BlackoutDuration.Value = AdjustSeconds(BlackoutDuration, delta); break;
+            case DetailSettingKey.PhantomDuration: PhantomDuration.Value = AdjustSeconds(PhantomDuration, delta); break;
+            case DetailSettingKey.TrapDuration: TrapDuration.Value = AdjustSeconds(TrapDuration, delta); break;
+            case DetailSettingKey.SilenceDuration: SilenceDuration.Value = AdjustSeconds(SilenceDuration, delta); break;
+            case DetailSettingKey.AlchemyBodyStealthDuration: AlchemyBodyStealthDuration.Value = AdjustSeconds(AlchemyBodyStealthDuration, delta); break;
             case DetailSettingKey.SheriffCanKillNeutrals:
                 SheriffCanKillNeutrals.Value = !SheriffCanKillNeutrals.Value;
                 break;
@@ -249,6 +290,16 @@ internal sealed class TempModSettings
             VampireDelay = Math.Max(0.5f, VampireDelay.Value),
             VampireCooldown = Math.Max(0, VampireCooldown.Value),
             JackalKillCooldown = Math.Max(0, JackalKillCooldown.Value),
+            SpecialAbilityCooldown = Math.Max(0, SpecialAbilityCooldown.Value),
+            CleanerDuration = Math.Max(0.5f, CleanerDuration.Value),
+            BombDelay = Math.Max(0.5f, BombDelay.Value),
+            BombRadius = Math.Max(0.5f, BombRadius.Value),
+            MorphDuration = Math.Max(0.5f, MorphDuration.Value),
+            BlackoutDuration = Math.Max(0.5f, BlackoutDuration.Value),
+            PhantomDuration = Math.Max(0.5f, PhantomDuration.Value),
+            TrapDuration = Math.Max(0.5f, TrapDuration.Value),
+            SilenceDuration = Math.Max(0.5f, SilenceDuration.Value),
+            AlchemyBodyStealthDuration = Math.Max(0.5f, AlchemyBodyStealthDuration.Value),
         };
     }
 
@@ -294,14 +345,32 @@ internal sealed class TempModSettings
         VampireDelay,
         VampireCooldown,
         JackalKillCooldown,
+        CleanerDuration,
+        BombDelay,
+        BombRadius,
+        MorphDuration,
+        BlackoutDuration,
+        PhantomDuration,
+        TrapDuration,
+        SilenceDuration,
+        AlchemyBodyStealthDuration,
     }
 
-    private static readonly RoleId[] SelectableRoles =
+    internal static readonly RoleId[] SelectableRoles =
     {
         RoleId.Sheriff, RoleId.Doctor, RoleId.MadScientist, RoleId.Tracker,
         RoleId.TimeTraveler, RoleId.Seer, RoleId.BarrierNic, RoleId.LightWorker,
         RoleId.Investigator, RoleId.Mayor, RoleId.Ninja, RoleId.Warlock,
         RoleId.Mafia, RoleId.Puppeteer, RoleId.Eraser, RoleId.Undertaker,
-        RoleId.Jester, RoleId.Jackal, RoleId.Vampire,
+        RoleId.Cleaner, RoleId.MadGuesser, RoleId.Morphing, RoleId.Marionette,
+        RoleId.Bomber, RoleId.Spy, RoleId.Trapper, RoleId.Blackout,
+        RoleId.Phantom, RoleId.BountyHunter, RoleId.VampireLord, RoleId.Hacker,
+        RoleId.Illusionist, RoleId.Silencer, RoleId.Gluttony, RoleId.TimeThief,
+        RoleId.Deceptor, RoleId.Necromancer, RoleId.Witch, RoleId.Alchemist,
+        RoleId.Jester, RoleId.Jackal, RoleId.Vampire, RoleId.God,
+        RoleId.SchrodingerCat, RoleId.Zombie, RoleId.Apathy, RoleId.Advocate,
+        RoleId.Clown, RoleId.Arsonist, RoleId.Terrorist, RoleId.Vulture,
+        RoleId.Collector, RoleId.Guardian, RoleId.Fanatic, RoleId.Thief,
+        RoleId.GhostHunter, RoleId.Bouncer, RoleId.Spectator, RoleId.Assassin,
     };
 }

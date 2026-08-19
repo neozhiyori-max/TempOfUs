@@ -41,7 +41,7 @@ internal static class LobbySettingsPresenter
             TempModPlugin.Settings.AdjustFactionCount(Faction.Impostor, +1);
             ShowCategoryList(menu);
         }, "ImpostorLimit");
-        CreateActionRow(menu, ref y, "<color=#FF6666>◆ インポスター役職の詳細</color>", "ニンジャ・ウォーロックなど6役職", "開く", () => ShowRoleList(menu, "インポスター"), "OpenImpostor");
+        CreateActionRow(menu, ref y, "<color=#FF6666>◆ インポスター役職の詳細</color>", "ニンジャ・クリーナーなど26役職", "開く", () => ShowRoleList(menu, "インポスター"), "OpenImpostor");
         CreateTwoWayRow(menu, ref y, "<color=#D890FF>第三陣営役職</color>", $"< {TempModPlugin.Settings.GetFactionCount(Faction.Neutral)} / 15 >", "－", "＋", () =>
         {
             TempModPlugin.Settings.AdjustFactionCount(Faction.Neutral, -1);
@@ -51,7 +51,7 @@ internal static class LobbySettingsPresenter
             TempModPlugin.Settings.AdjustFactionCount(Faction.Neutral, +1);
             ShowCategoryList(menu);
         }, "NeutralLimit");
-        CreateActionRow(menu, ref y, "<color=#D890FF>◆ 第三陣営役職の詳細</color>", "ジェスター・ジャッカルなど4役職", "開く", () => ShowRoleList(menu, "第三陣営"), "OpenNeutral");
+        CreateActionRow(menu, ref y, "<color=#D890FF>◆ 第三陣営役職の詳細</color>", "神・ジェスター・ゾンビなど20役職", "開く", () => ShowRoleList(menu, "第三陣営"), "OpenNeutral");
         CreateStaticRow(menu, ref y, "出現率", "10%刻みで変更できます", "ChanceHelp");
         CreateStaticRow(menu, ref y, "少人数開始", "1人から開始可能。ラバーズは2人以上で有効です。", "PlayerCountHelp");
 #if TEMPMOD_ADMIN
@@ -69,21 +69,42 @@ internal static class LobbySettingsPresenter
 #endif
     }
 
-    internal static void ShowRoleList(GameOptionsMenu menu, string category)
+    internal static void ShowRoleList(GameOptionsMenu menu, string category, int page = 0, RoleId? selectedRole = null)
     {
+        const int pageSize = 7;
         Prepare(menu);
         var y = GameOptionsMenu.START_POS_Y - 0.10f;
-        CreateHeader(menu, ref y, CategoryTitle(category), "役職を選択すると詳細設定を開きます");
+        var rows = TempModPlugin.Settings.GetLobbyRows().Where(row => row.Category == category).ToArray();
+        var pageCount = Math.Max(1, (int)Math.Ceiling(rows.Length / (double)pageSize));
+        page = Math.Clamp(page, 0, pageCount - 1);
+        const string hoverGuide = "カーソルを役職名に合わせると能力・ペナルティ・勝利条件を表示します";
+        var initialDescription = selectedRole is RoleId selected ? RoleDescriptionCatalog.Get(selected) : hoverGuide;
+        var hoverHeader = CreateHeader(menu, ref y, CategoryTitle(category), $"{initialDescription}  < {page + 1} / {pageCount} >");
 
-        foreach (var row in TempModPlugin.Settings.GetLobbyRows().Where(row => row.Category == category))
+        foreach (var row in rows.Skip(page * pageSize).Take(pageSize))
         {
-            CreateActionRow(menu, ref y, row.Label, row.Enabled ? "<color=#78FF91>ON</color>    <size=55%>詳細設定</size>" : "<color=#FF7777>OFF</color>    <size=55%>詳細設定</size>", "設定", () =>
+            var role = row.Role;
+            var isEnabled = row.Enabled;
+            CreateTwoWayRow(menu, ref y, row.Label, isEnabled ? "<color=#78FF91>ON</color>" : "<color=#FF7777>OFF</color>", "切替", "設定", () =>
             {
-                ShowRoleDetail(menu, category, row.Role);
-            }, "Role_" + row.Role);
+                // 一覧内だけで即時反転し、現在のページを維持する。
+                TempModPlugin.Settings.SetRoleEnabled(role, !isEnabled);
+                ShowRoleList(menu, category, page, role);
+            }, () =>
+            {
+                ShowRoleDetail(menu, category, role);
+            }, "Role_" + role, hoverHeader?.ValueText, RoleDescriptionCatalog.Get(role), hoverGuide);
         }
 
-        if (category == "第三陣営")
+        CreateTwoWayRow(menu, ref y, "一覧ページ", $"< {page + 1} / {pageCount} >", "前へ", "次へ", () =>
+        {
+            ShowRoleList(menu, category, page - 1);
+        }, () =>
+        {
+            ShowRoleList(menu, category, page + 1);
+        }, "RolePage");
+
+        if (category == "第三陣営" && page == pageCount - 1)
         {
             CreateActionRow(menu, ref y, "ラバーズ", TempModPlugin.Settings.EnableLovers.Value ? "<color=#78FF91>ON</color>    <size=55%>追加設定</size>" : "<color=#FF7777>OFF</color>    <size=55%>追加設定</size>", "設定", () =>
             {
@@ -179,15 +200,16 @@ internal static class LobbySettingsPresenter
         RemoveExisting(menu.settingsContainer);
     }
 
-    private static void CreateHeader(GameOptionsMenu menu, ref float y, string title, string value)
+    private static StringOption? CreateHeader(GameOptionsMenu menu, ref float y, string title, string value)
     {
         var row = CreateOption(menu, y, "Header_" + Math.Abs(y));
         if (row == null)
-            return;
+            return null;
         row.TitleText.text = title;
         row.ValueText.text = "<size=55%>" + value + "</size>";
         HideButtons(row);
         y -= RowSpacing;
+        return row;
     }
 
     private static void CreateStaticRow(GameOptionsMenu menu, ref float y, string title, string value, string key)
@@ -213,7 +235,7 @@ internal static class LobbySettingsPresenter
         y -= RowSpacing;
     }
 
-    private static void CreateTwoWayRow(GameOptionsMenu menu, ref float y, string title, string value, string leftLabel, string rightLabel, Action onLeft, Action onRight, string key)
+    private static void CreateTwoWayRow(GameOptionsMenu menu, ref float y, string title, string value, string leftLabel, string rightLabel, Action onLeft, Action onRight, string key, TMP_Text? hoverDescriptionTarget = null, string? hoverText = null, string? hoverDefaultText = null)
     {
         var row = CreateOption(menu, y, key);
         if (row == null)
@@ -222,6 +244,12 @@ internal static class LobbySettingsPresenter
         row.ValueText.text = value;
         ConfigureButton(row.MinusBtn, leftLabel, onLeft);
         ConfigureButton(row.PlusBtn, rightLabel, onRight);
+        if (hoverDescriptionTarget != null && !string.IsNullOrWhiteSpace(hoverText) && !string.IsNullOrWhiteSpace(hoverDefaultText))
+        {
+            // StringOption全体にはマウスイベントが来ないため、実際に入力を受ける左右のPassiveButtonへ登録する。
+            RoleHoverHint.Configure(row.MinusBtn, hoverDescriptionTarget, hoverText, hoverDefaultText);
+            RoleHoverHint.Configure(row.PlusBtn, hoverDescriptionTarget, hoverText, hoverDefaultText);
+        }
         y -= RowSpacing;
     }
 
@@ -273,7 +301,9 @@ internal static class LobbySettingsPresenter
         _ => "#D890FF",
     };
 
-    private static string GetShortDescription(RoleId role) => role switch
+    private static string GetShortDescription(RoleId role) => RoleDescriptionCatalog.Get(role);
+
+    /*
     {
         RoleId.Sheriff => "敵を直接キル",
         RoleId.Doctor => "死亡推定時刻",
@@ -296,6 +326,7 @@ internal static class LobbySettingsPresenter
         RoleId.Vampire => "時間差キル",
         _ => string.Empty,
     };
+    */
 
     private static void RemoveExisting(Transform container)
     {

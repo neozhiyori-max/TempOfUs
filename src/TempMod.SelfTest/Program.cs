@@ -12,6 +12,15 @@ var tests = new (string Name, Action Run)[]
     ("シェリフは設定で第三陣営をキルできない", SheriffCannotKillNeutralWhenDisabled),
     ("1人でも役職抽選できる", SinglePlayerAssignment),
     ("陣営別人数上限を守る", FactionRoleLimitsAreRespected),
+    ("クリーナーは死体を清掃できる", CleanerRemovesBody),
+    ("ボマーは時限爆弾で周囲を巻き込む", BomberExplodesNearbyPlayers),
+    ("ジャッカルはクルーをサイドキックに勧誘できる", JackalRecruitsSidekick),
+    ("ゾンビはクルーを子ゾンビに感染できる", ZombieInfectsCrew),
+    ("ハゲタカの死体回収数は時間経過後も残る", VultureCollectionCountPersists),
+    ("マッドゲッサーは会議中の正解で対象をキルできる", MadGuesserKillsCorrectRole),
+    ("マッドゲッサーは会議中の誤答で自爆する", MadGuesserDiesOnWrongGuess),
+    ("アドボケイトの買収は自分を二票、対象を零票にする", AdvocateBribeChangesVoteWeight),
+    ("アルソニストは全員への注油後に点火で勝利する", ArsonistIgnitesAllDousedPlayers),
 };
 
 var failed = 0;
@@ -40,6 +49,10 @@ static (RoleEngine Engine, TestGateway Gateway) CreateEngine()
         VampireCooldown = 0,
         VampireDelay = 2,
         KillDistance = 3,
+        SpecialAbilityCooldown = 0,
+        CleanerDuration = .1f,
+        BombDelay = .1f,
+        BombRadius = 3f,
     });
     for (byte playerId = 1; playerId <= 4; playerId++)
     {
@@ -174,6 +187,108 @@ static void SinglePlayerAssignment()
         Assert(impostorCustomCount <= 1);
         Assert(neutralCount <= 1);
     }
+
+static void CleanerRemovesBody()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Cleaner);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.AssignRole(3, RoleId.Impostor);
+    Assert(engine.TryHandleAbility(new AbilityRequest(3, AbilityId.Kill, 2, null, 2), 2));
+    Assert(engine.Bodies.ContainsKey(2));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Clean, 2, null, 3), 3));
+    engine.Tick(3.2f);
+    Assert(!engine.Bodies.ContainsKey(2));
+}
+
+static void BomberExplodesNearbyPlayers()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Bomber);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.AssignRole(3, RoleId.Crewmate);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.PlantBomb, 2, null, 2), 2));
+    engine.Tick(2.2f);
+    Assert(!engine.Players[2].IsAlive);
+    Assert(!engine.Players[3].IsAlive);
+}
+
+static void JackalRecruitsSidekick()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Jackal);
+    engine.AssignRole(2, RoleId.Crewmate);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.RecruitSidekick, 2, null, 2), 2));
+    Assert(engine.Players[2].PrimaryRole == RoleId.Sidekick);
+}
+
+static void ZombieInfectsCrew()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Zombie);
+    engine.AssignRole(2, RoleId.Crewmate);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.InfectKill, 2, null, 2), 2));
+    Assert(engine.Players[2].PrimaryRole == RoleId.ChildZombie);
+}
+
+static void VultureCollectionCountPersists()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Vulture);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.AssignRole(3, RoleId.Impostor);
+    Assert(engine.TryHandleAbility(new AbilityRequest(3, AbilityId.Kill, 2, null, 2), 2));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.CollectBody, 2, null, 3), 3));
+    engine.Tick(30);
+    Assert(engine.Players[1].EffectCounts.TryGetValue(AbilityId.CollectBody, out var collected) && collected == 1);
+}
+
+static void MadGuesserKillsCorrectRole()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.MadGuesser);
+    engine.AssignRole(2, RoleId.Sheriff);
+    engine.StartMeeting(2);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.GuessRole, 2, new Position((float)RoleId.Sheriff, 0), 3), 3));
+    Assert(!engine.Players[2].IsAlive);
+    Assert(engine.Players[1].IsAlive);
+}
+
+static void MadGuesserDiesOnWrongGuess()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.MadGuesser);
+    engine.AssignRole(2, RoleId.Sheriff);
+    engine.StartMeeting(2);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.GuessRole, 2, new Position((float)RoleId.Doctor, 0), 3), 3));
+    Assert(!engine.Players[1].IsAlive);
+    Assert(engine.Players[2].IsAlive);
+}
+
+static void AdvocateBribeChangesVoteWeight()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Advocate);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.StartMeeting(2);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Bribe, 2, null, 3), 3));
+    Assert(engine.GetVoteWeight(1) == 2);
+    Assert(engine.GetVoteWeight(2) == 0);
+}
+
+static void ArsonistIgnitesAllDousedPlayers()
+{
+    var (engine, gateway) = CreateEngine();
+    engine.AssignRole(1, RoleId.Arsonist);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.AssignRole(3, RoleId.Crewmate);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Douse, 2, null, 2), 2));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Douse, 3, null, 3), 3));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Douse, 4, null, 4), 4));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Ignite, null, null, 5), 5));
+    Assert(!engine.Players[2].IsAlive && !engine.Players[3].IsAlive && !engine.Players[4].IsAlive);
+    Assert(gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.Victory && gameEvent.Detail == VictoryKind.Arsonist.ToString()));
+}
 
 static void Assert(bool condition)
 

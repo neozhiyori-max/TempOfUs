@@ -15,6 +15,7 @@ public sealed class RoleEngine
     private readonly Dictionary<byte, float> _activeTrackUntil = new();
     private readonly Dictionary<byte, byte> _trackTargets = new();
     private readonly Dictionary<byte, float> _activeVitalsUntil = new();
+    private readonly Dictionary<byte, byte> _witchLinks = new();
     private float _meetingStartedAt = -1;
 
     public RoleEngine(IRoleGameGateway gateway, RoleOptions? options = null)
@@ -57,6 +58,17 @@ public sealed class RoleEngine
             player.AbilityCooldowns.Clear();
             foreach (var cooldown in snapshot.AbilityCooldowns)
                 player.AbilityCooldowns[cooldown.Key] = cooldown.Value;
+            player.EffectExpiresAt.Clear();
+            foreach (var effect in snapshot.EffectExpiresAt)
+                player.EffectExpiresAt[effect.Key] = effect.Value;
+            player.EffectTargets.Clear();
+            foreach (var target in snapshot.EffectTargets)
+                player.EffectTargets[target.Key] = target.Value;
+            player.EffectCounts.Clear();
+            foreach (var count in snapshot.EffectCounts)
+                player.EffectCounts[count.Key] = count.Value;
+            player.SecondaryEffectTargetId = snapshot.SecondaryEffectTargetId;
+            player.ImmobilizedUntil = snapshot.ImmobilizedUntil;
         }
 
         _bodies.Clear();
@@ -105,6 +117,8 @@ public sealed class RoleEngine
         if (!player.IsAlive || IsMeetingActive)
             return;
 
+        if (player.ImmobilizedUntil > now)
+            return;
         player.Position = position;
         while (player.PositionHistory.Count > 0 && now - player.PositionHistory.Peek().Time > _options.TimeTravelerSeconds + 2f)
             player.PositionHistory.Dequeue();
@@ -124,6 +138,7 @@ public sealed class RoleEngine
 
         _footprints.RemoveAll(step => now - step.CreatedAt > _options.InvestigatorTrailLifetime);
         ExpireTransientEffects(now);
+        ResolveAdditionalEffects(now);
         ResolveExpiredBites(now);
         ResolveCurses(now);
         EvaluateVictory(now);
@@ -188,7 +203,18 @@ public sealed class RoleEngine
     public int GetVoteWeight(byte playerId)
     {
         var player = GetPlayer(playerId);
-        return player.IsAlive && player.PrimaryRole == RoleId.Mayor ? 2 : 1;
+        if (!player.IsAlive)
+            return 0;
+
+        var advocate = _players.Values.FirstOrDefault(candidate =>
+            candidate.IsAlive &&
+            candidate.PrimaryRole == RoleId.Advocate &&
+            candidate.EffectTargets.TryGetValue(AbilityId.Bribe, out var bribedId) &&
+            bribedId == playerId);
+        if (advocate != null)
+            return 0;
+
+        return player.PrimaryRole == RoleId.Mayor || (player.PrimaryRole == RoleId.Advocate && player.EffectTargets.ContainsKey(AbilityId.Bribe)) ? 2 : 1;
     }
 
     public IReadOnlyList<Footprint> GetVisibleFootprints(byte viewerId, float now)
@@ -245,8 +271,8 @@ public sealed class RoleEngine
 
     public bool TryHandleAbility(AbilityRequest request, float now)
     {
-        if (IsMeetingActive)
-            return Reject(request, now, "会議中は能力を使えません。");
+        if (IsMeetingActive && request.Ability is not (AbilityId.GuessRole or AbilityId.Bribe or AbilityId.DeceiveVote))
+            return Reject(request, now, "会議中はこの能力を使えません。");
 
         if (!_players.TryGetValue(request.SenderId, out var actor) || !actor.IsAlive)
             return Reject(request, now, "発動者が生存していません。");
@@ -266,8 +292,429 @@ public sealed class RoleEngine
             AbilityId.CarryBody => TryCarryBody(actor, request.TargetId, now),
             AbilityId.DropBody => TryDropBody(actor, request.RequestedPosition, now),
             AbilityId.Bite => TryBite(actor, request.TargetId, now),
+            AbilityId.Clean => TryClean(actor, request.TargetId, now),
+            AbilityId.CollectDna => TryCollectDna(actor, request.TargetId, now),
+            AbilityId.Morph => TryMorph(actor, now),
+            AbilityId.PlantBomb => TryPlantBomb(actor, request.TargetId, now),
+            AbilityId.SetTrap => TrySetTrap(actor, request.RequestedPosition, now),
+            AbilityId.Blackout => TryTimedEffect(actor, RoleId.Blackout, AbilityId.Blackout, now, _options.BlackoutDuration, "目隠し", GameEventKind.BlackoutStarted),
+            AbilityId.Phase => TryTimedEffect(actor, RoleId.Phantom, AbilityId.Phase, now, _options.PhantomDuration, "幽体化", GameEventKind.PhaseStarted),
+            AbilityId.Silence => TrySilence(actor, request.TargetId, now),
+            AbilityId.Devour => TryDevour(actor, request.TargetId, now),
+            AbilityId.AnimateBody => TryAnimateBody(actor, request.TargetId, request.RequestedPosition, now),
+            AbilityId.LinkCurse => TryLinkCurse(actor, request.TargetId, now),
+            AbilityId.CheckBounty => TryCheckBounty(actor, now),
+            AbilityId.Omniscience => TryOmniscience(actor, now),
+            AbilityId.RecruitSidekick => TryRecruitSidekick(actor, request.TargetId, now),
+            AbilityId.InfectKill => TryInfect(actor, request.TargetId, now),
+            AbilityId.AbandonTasks => TryApathy(actor, now),
+            AbilityId.ConfusionGas => TryConfusionGas(actor, request.TargetId, now),
+            AbilityId.SelfDestruct => TrySelfDestruct(actor, now),
+            AbilityId.CollectBody => TryCollectBody(actor, request.TargetId, now),
+            AbilityId.AbsoluteDefense => TryAbsoluteDefense(actor, request.TargetId, now),
+            AbilityId.FanaticWorship => TryFanaticWorship(actor, request.TargetId, now),
+            AbilityId.Spectate => TryTimedEffect(actor, RoleId.Spectator, AbilityId.Spectate, now, _options.PhantomDuration, "観戦モード", GameEventKind.AbilityAccepted),
+            AbilityId.Assassinate => TryAssassinate(actor, request.TargetId, now),
+            AbilityId.MarionetteKill => TryDirectKill(actor, request.TargetId, now, erased: true),
+            AbilityId.Wiretap => TryTimedEffect(actor, RoleId.Spy, AbilityId.Wiretap, now, 12f, "盗聴", GameEventKind.AbilityAccepted),
+            AbilityId.Hack => TryTimedEffect(actor, RoleId.Hacker, AbilityId.Hack, now, 12f, "偽装工作", GameEventKind.AbilityAccepted),
+            AbilityId.CreateIllusion => TryTimedEffect(actor, RoleId.Illusionist, AbilityId.CreateIllusion, now, 15f, "分身生成", GameEventKind.AbilityAccepted),
+            AbilityId.StealTime => TryRoleAction(actor, RoleId.TimeThief, AbilityId.StealTime, now),
+            AbilityId.DeceiveVote => TryRoleAction(actor, RoleId.Deceptor, AbilityId.DeceiveVote, now),
+            AbilityId.AlchemyStealth => TryAlchemyStealth(actor, request.TargetId, now),
+            AbilityId.GuessRole => TryMeetingGuess(actor, request.TargetId, request.RequestedPosition, now),
+            AbilityId.Bribe => TryBribe(actor, request.TargetId, now),
+            AbilityId.Douse => TryDouse(actor, request.TargetId, now),
+            AbilityId.Ignite => TryIgnite(actor, now),
+            AbilityId.AlignFaction => TryRoleAction(actor, RoleId.SchrodingerCat, AbilityId.AlignFaction, now),
+            AbilityId.StealItem => TryStealItem(actor, request.TargetId, now),
+            AbilityId.ForceEject => TryRoleAction(actor, RoleId.Bouncer, AbilityId.ForceEject, now),
+            AbilityId.CaptureGhost => TryCaptureGhost(actor, request.TargetId, now),
+            AbilityId.StealSkin => TryStealSkin(actor, request.TargetId, now),
             _ => Reject(request, now, "未対応の能力です。"),
         };
+    }
+
+    private bool TryMeetingGuess(PlayerState actor, byte? targetId, Position? requestedPosition, float now)
+    {
+        if (!IsMeetingActive || actor.PrimaryRole != RoleId.MadGuesser || !CanUse(actor, AbilityId.GuessRole, now))
+            return Reject(actor, AbilityId.GuessRole, now, "会議中のマッドゲッサーだけが推測できます。");
+        if (targetId is not byte id || !_players.TryGetValue(id, out var target) || !target.IsAlive || id == actor.PlayerId)
+            return Reject(actor, AbilityId.GuessRole, now, "推測対象を選んでください。");
+        if (requestedPosition is not Position guessPayload || guessPayload.X < byte.MinValue || guessPayload.X > byte.MaxValue || !Enum.IsDefined(typeof(RoleId), (byte)guessPayload.X))
+            return Reject(actor, AbilityId.GuessRole, now, "推測する役職を選んでください。");
+
+        var guessedRole = (RoleId)(byte)guessPayload.X;
+        if (RoleCatalog.GetFaction(guessedRole) != Faction.Crew)
+            return Reject(actor, AbilityId.GuessRole, now, "クルー役職だけを推測できます。");
+        SetCooldown(actor, AbilityId.GuessRole, now, float.MaxValue / 4f);
+        if (target.PrimaryRole == guessedRole)
+            KillPlayer(target.PlayerId, actor.PlayerId, now, $"推測成功: {RoleCatalog.Get(guessedRole).DisplayName}", silent: false, erased: false);
+        else
+            KillPlayer(actor.PlayerId, actor.PlayerId, now, $"推測失敗: {RoleCatalog.Get(guessedRole).DisplayName}", silent: false, erased: false);
+        return Accept(actor, AbilityId.GuessRole, now);
+    }
+
+    private bool TryBribe(PlayerState actor, byte? targetId, float now)
+    {
+        if (!IsMeetingActive || actor.PrimaryRole != RoleId.Advocate || !CanUse(actor, AbilityId.Bribe, now))
+            return Reject(actor, AbilityId.Bribe, now, "会議中のアドボケイトだけが買収できます。");
+        if (targetId is not byte id || !_players.TryGetValue(id, out var target) || !target.IsAlive || id == actor.PlayerId)
+            return Reject(actor, AbilityId.Bribe, now, "買収対象を選んでください。");
+        actor.EffectTargets[AbilityId.Bribe] = id;
+        actor.EffectExpiresAt[AbilityId.Bribe] = float.MaxValue;
+        SetCooldown(actor, AbilityId.Bribe, now, float.MaxValue / 4f);
+        return Accept(actor, AbilityId.Bribe, now);
+    }
+
+    private bool TryDouse(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Arsonist || !CanUse(actor, AbilityId.Douse, now) || !TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.Douse, now, "ガソリンをかける対象に近づいてください。");
+        if (target.EffectTargets.TryGetValue(AbilityId.Douse, out var ownerId) && ownerId == actor.PlayerId)
+            return Reject(actor, AbilityId.Douse, now, "その対象には既にガソリンをかけています。");
+        target.EffectTargets[AbilityId.Douse] = actor.PlayerId;
+        SetCooldown(actor, AbilityId.Douse, now, _options.SpecialAbilityCooldown);
+        return Accept(actor, AbilityId.Douse, now);
+    }
+
+    private bool TryIgnite(PlayerState actor, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Arsonist || !CanUse(actor, AbilityId.Ignite, now))
+            return Reject(actor, AbilityId.Ignite, now, "点火できません。");
+        var victims = _players.Values.Where(player => player.IsAlive && player.PlayerId != actor.PlayerId).ToArray();
+        if (victims.Length == 0 || victims.Any(player => !player.EffectTargets.TryGetValue(AbilityId.Douse, out var ownerId) || ownerId != actor.PlayerId))
+            return Reject(actor, AbilityId.Ignite, now, "生存者全員にガソリンをかける必要があります。");
+        foreach (var victim in victims)
+            KillPlayer(victim.PlayerId, actor.PlayerId, now, "点火", silent: false, erased: false);
+        EmitVictory(new VictoryResult(VictoryKind.Arsonist, new[] { actor.PlayerId }), now);
+        return Accept(actor, AbilityId.Ignite, now);
+    }
+
+    private bool TryRoleAction(PlayerState actor, RoleId role, AbilityId ability, float now)
+    {
+        if (actor.PrimaryRole != role || !CanUse(actor, ability, now))
+            return Reject(actor, ability, now, $"{RoleCatalog.Get(role).DisplayName}の能力は使用できません。");
+        actor.EffectExpiresAt[ability] = now + _options.SpecialAbilityCooldown;
+        SetCooldown(actor, ability, now, _options.SpecialAbilityCooldown);
+        return Accept(actor, ability, now);
+    }
+
+    private bool TryAlchemyStealth(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Alchemist || !CanUse(actor, AbilityId.AlchemyStealth, now) || !TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.AlchemyStealth, now, "錬金ステルス対象に近づいてください。");
+        KillPlayer(target.PlayerId, actor.PlayerId, now, "錬金ステルス", silent: false, erased: false);
+        if (_bodies.TryGetValue(target.PlayerId, out var body))
+            _bodies[target.PlayerId] = body with { InvisibleUntil = now + _options.AlchemyBodyStealthDuration };
+        SetCooldown(actor, AbilityId.AlchemyStealth, now, _options.StandardKillCooldown);
+        _gateway.Emit(new GameEvent(GameEventKind.BodyHidden, now, actor.PlayerId, target.PlayerId, _options.AlchemyBodyStealthDuration.ToString("0.0")));
+        return Accept(actor, AbilityId.AlchemyStealth, now);
+    }
+
+    private bool TryStealItem(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Collector || !CanUse(actor, AbilityId.StealItem, now) || !TryGetLivingTarget(actor, targetId, now, out _))
+            return Reject(actor, AbilityId.StealItem, now, "アイテムを奪う対象に近づいてください。");
+        actor.EffectCounts[AbilityId.StealItem] = (actor.EffectCounts.TryGetValue(AbilityId.StealItem, out var count) ? count : 0) + 1;
+        SetCooldown(actor, AbilityId.StealItem, now, _options.SpecialAbilityCooldown);
+        return Accept(actor, AbilityId.StealItem, now);
+    }
+
+    private bool TryCaptureGhost(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.GhostHunter || !CanUse(actor, AbilityId.CaptureGhost, now) || targetId is not byte ghostId || !_players.TryGetValue(ghostId, out var ghost) || ghost.IsAlive)
+            return Reject(actor, AbilityId.CaptureGhost, now, "捕獲できるゴーストを選んでください。");
+        actor.EffectTargets[AbilityId.CaptureGhost] = ghostId;
+        actor.EffectCounts[AbilityId.CaptureGhost] = (actor.EffectCounts.TryGetValue(AbilityId.CaptureGhost, out var count) ? count : 0) + 1;
+        SetCooldown(actor, AbilityId.CaptureGhost, now, _options.SpecialAbilityCooldown);
+        return Accept(actor, AbilityId.CaptureGhost, now);
+    }
+
+    private bool TryStealSkin(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Thief || !CanUse(actor, AbilityId.StealSkin, now) || !TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.StealSkin, now, "スキンを奪う対象に近づいてください。");
+        KillPlayer(target.PlayerId, actor.PlayerId, now, "スキン強奪", silent: false, erased: false);
+        actor.EffectTargets[AbilityId.StealSkin] = target.PlayerId;
+        actor.EffectExpiresAt[AbilityId.StealSkin] = now + 20f;
+        SetCooldown(actor, AbilityId.StealSkin, now, _options.StandardKillCooldown);
+        return Accept(actor, AbilityId.StealSkin, now);
+    }
+
+    private bool TryOmniscience(PlayerState actor, float now)
+    {
+        if (actor.PrimaryRole != RoleId.God || !CanUse(actor, AbilityId.Omniscience, now))
+            return Reject(actor, AbilityId.Omniscience, now, "全知は使用できません。");
+        actor.EffectExpiresAt[AbilityId.Omniscience] = float.MaxValue;
+        _gateway.Emit(new GameEvent(GameEventKind.AbilityAccepted, now, actor.PlayerId, Detail: "全役職を公開"));
+        return Accept(actor, AbilityId.Omniscience, now);
+    }
+
+    private bool TryRecruitSidekick(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Jackal || !CanUse(actor, AbilityId.RecruitSidekick, now) || !TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.RecruitSidekick, now, "勧誘できるクルーに近づいてください。");
+        if (RoleCatalog.GetFaction(target.PrimaryRole) != Faction.Crew)
+            return Reject(actor, AbilityId.RecruitSidekick, now, "クルーだけをサイドキックにできます。");
+        target.PrimaryRole = RoleId.Sidekick;
+        target.EffectTargets[AbilityId.RecruitSidekick] = actor.PlayerId;
+        SetCooldown(actor, AbilityId.RecruitSidekick, now, _options.SpecialAbilityCooldown);
+        return Accept(actor, AbilityId.RecruitSidekick, now);
+    }
+
+    private bool TryInfect(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Zombie || !CanUse(actor, AbilityId.InfectKill, now) || !TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.InfectKill, now, "感染できるクルーに近づいてください。");
+        if (RoleCatalog.GetFaction(target.PrimaryRole) != Faction.Crew)
+            return Reject(actor, AbilityId.InfectKill, now, "クルーだけを感染できます。");
+        target.PrimaryRole = RoleId.ChildZombie;
+        target.EffectTargets[AbilityId.InfectKill] = actor.PlayerId;
+        SetCooldown(actor, AbilityId.InfectKill, now, _options.SpecialAbilityCooldown);
+        return Accept(actor, AbilityId.InfectKill, now);
+    }
+
+    private bool TryApathy(PlayerState actor, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Apathy)
+            return Reject(actor, AbilityId.AbandonTasks, now, "アパシー専用能力です。");
+        actor.EffectExpiresAt[AbilityId.AbandonTasks] = float.MaxValue;
+        return Accept(actor, AbilityId.AbandonTasks, now);
+    }
+
+    private bool TryConfusionGas(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Clown || !CanUse(actor, AbilityId.ConfusionGas, now) || !TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.ConfusionGas, now, "錯乱させる対象に近づいてください。");
+        target.EffectExpiresAt[AbilityId.ConfusionGas] = now + _options.PhantomDuration;
+        SetCooldown(actor, AbilityId.ConfusionGas, now, _options.SpecialAbilityCooldown);
+        return Accept(actor, AbilityId.ConfusionGas, now);
+    }
+
+    private bool TrySelfDestruct(PlayerState actor, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Terrorist || !CanUse(actor, AbilityId.SelfDestruct, now))
+            return Reject(actor, AbilityId.SelfDestruct, now, "自爆できません。");
+        var victims = _players.Values.Where(player => player.IsAlive && player.PlayerId != actor.PlayerId && player.Position.DistanceTo(actor.Position) <= _options.BombRadius).ToArray();
+        var won = victims.Any(player => player.PrimaryRole is RoleId.Jackal or RoleId.Sidekick || RoleCatalog.GetFaction(player.PrimaryRole) == Faction.Impostor);
+        foreach (var victim in victims)
+            KillPlayer(victim.PlayerId, actor.PlayerId, now, "自爆", silent: false, erased: false);
+        KillPlayer(actor.PlayerId, actor.PlayerId, now, "自爆", silent: false, erased: false);
+        if (won)
+            EmitVictory(new VictoryResult(VictoryKind.Terrorist, new[] { actor.PlayerId }), now);
+        return Accept(actor, AbilityId.SelfDestruct, now);
+    }
+
+    private bool TryCollectBody(PlayerState actor, byte? bodyOwnerId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Vulture || !CanUse(actor, AbilityId.CollectBody, now) || !TryGetBodyTarget(actor, bodyOwnerId, out var body))
+            return Reject(actor, AbilityId.CollectBody, now, "回収できる死体に近づいてください。");
+        _bodies.Remove(body.OwnerId);
+        actor.EffectCounts[AbilityId.CollectBody] = (actor.EffectCounts.TryGetValue(AbilityId.CollectBody, out var count) ? count : 0) + 1;
+        SetCooldown(actor, AbilityId.CollectBody, now, _options.SpecialAbilityCooldown);
+        return Accept(actor, AbilityId.CollectBody, now);
+    }
+
+    private bool TryAbsoluteDefense(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Guardian || !TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.AbsoluteDefense, now, "守るクルーに近づいてください。");
+        if (RoleCatalog.GetFaction(target.PrimaryRole) != Faction.Crew)
+            return Reject(actor, AbilityId.AbsoluteDefense, now, "クルーだけを守れます。");
+        actor.EffectTargets[AbilityId.AbsoluteDefense] = target.PlayerId;
+        target.HasBarrier = true;
+        return Accept(actor, AbilityId.AbsoluteDefense, now);
+    }
+
+    private bool TryFanaticWorship(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Fanatic || !TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.FanaticWorship, now, "崇拝するインポスターに近づいてください。");
+        if (RoleCatalog.GetFaction(target.PrimaryRole) != Faction.Impostor)
+            return Reject(actor, AbilityId.FanaticWorship, now, "インポスターだけを崇拝できます。");
+        actor.EffectTargets[AbilityId.FanaticWorship] = target.PlayerId;
+        target.NextKillAt = Math.Min(target.NextKillAt, now + _options.StandardKillCooldown * .5f);
+        return Accept(actor, AbilityId.FanaticWorship, now);
+    }
+
+    private bool TryAssassinate(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Assassin || !CanUse(actor, AbilityId.Assassinate, now) || !TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.Assassinate, now, "暗殺対象に近づいてください。");
+        KillPlayer(target.PlayerId, actor.PlayerId, now, "暗殺", silent: false, erased: false);
+        SetCooldown(actor, AbilityId.Assassinate, now, float.MaxValue / 4f);
+        _gateway.Emit(new GameEvent(GameEventKind.AbilityAccepted, now, actor.PlayerId, target.PlayerId, $"暗殺位置: {actor.Position.X:0.0},{actor.Position.Y:0.0}", actor.Position));
+        return Accept(actor, AbilityId.Assassinate, now);
+    }
+
+    private bool TryClean(PlayerState actor, byte? bodyOwnerId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Cleaner)
+            return Reject(actor, AbilityId.Clean, now, "クリーナー専用能力です。");
+        if (!CanUse(actor, AbilityId.Clean, now) || !TryGetBodyTarget(actor, bodyOwnerId, out var body))
+            return Reject(actor, AbilityId.Clean, now, "清掃できる死体に近づいてください。");
+
+        actor.EffectTargets[AbilityId.Clean] = body.OwnerId;
+        actor.EffectExpiresAt[AbilityId.Clean] = now + _options.CleanerDuration;
+        actor.ImmobilizedUntil = now + _options.CleanerDuration;
+        SetCooldown(actor, AbilityId.Clean, now, _options.SpecialAbilityCooldown);
+        return Accept(actor, AbilityId.Clean, now);
+    }
+
+    private bool TryDevour(PlayerState actor, byte? bodyOwnerId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Gluttony)
+            return Reject(actor, AbilityId.Devour, now, "グラトニー専用能力です。");
+        if (!CanUse(actor, AbilityId.Devour, now) || !TryGetBodyTarget(actor, bodyOwnerId, out var body))
+            return Reject(actor, AbilityId.Devour, now, "捕食できる死体に近づいてください。");
+
+        _bodies.Remove(body.OwnerId);
+        SetCooldown(actor, AbilityId.Devour, now, _options.SpecialAbilityCooldown);
+        _gateway.Emit(new GameEvent(GameEventKind.BodyDevoured, now, actor.PlayerId, body.OwnerId));
+        return Accept(actor, AbilityId.Devour, now);
+    }
+
+    private bool TryCollectDna(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Morphing)
+            return Reject(actor, AbilityId.CollectDna, now, "モーフィング専用能力です。");
+        if (!CanUse(actor, AbilityId.CollectDna, now) || !TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.CollectDna, now, "DNAを採取する対象に近づいてください。");
+
+        actor.EffectTargets[AbilityId.CollectDna] = target.PlayerId;
+        SetCooldown(actor, AbilityId.CollectDna, now, _options.SpecialAbilityCooldown);
+        _gateway.Emit(new GameEvent(GameEventKind.DnaCollected, now, actor.PlayerId, target.PlayerId));
+        return Accept(actor, AbilityId.CollectDna, now);
+    }
+
+    private bool TryMorph(PlayerState actor, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Morphing || !actor.EffectTargets.TryGetValue(AbilityId.CollectDna, out var targetId))
+            return Reject(actor, AbilityId.Morph, now, "先にDNAを採取してください。");
+        if (!CanUse(actor, AbilityId.Morph, now))
+            return Reject(actor, AbilityId.Morph, now, "変身のクールダウン中です。");
+
+        actor.EffectTargets[AbilityId.Morph] = targetId;
+        actor.EffectExpiresAt[AbilityId.Morph] = now + _options.MorphDuration;
+        SetCooldown(actor, AbilityId.Morph, now, _options.SpecialAbilityCooldown);
+        _gateway.Emit(new GameEvent(GameEventKind.MorphStarted, now, actor.PlayerId, targetId, _options.MorphDuration.ToString("0.0")));
+        return Accept(actor, AbilityId.Morph, now);
+    }
+
+    private bool TryPlantBomb(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Bomber)
+            return Reject(actor, AbilityId.PlantBomb, now, "ボマー専用能力です。");
+        if (!CanUse(actor, AbilityId.PlantBomb, now) || !TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.PlantBomb, now, "爆弾を設置する対象に近づいてください。");
+
+        actor.EffectTargets[AbilityId.PlantBomb] = target.PlayerId;
+        actor.EffectExpiresAt[AbilityId.PlantBomb] = now + _options.BombDelay;
+        SetCooldown(actor, AbilityId.PlantBomb, now, _options.SpecialAbilityCooldown);
+        _gateway.Emit(new GameEvent(GameEventKind.BombPlanted, now, actor.PlayerId, target.PlayerId, _options.BombDelay.ToString("0.0")));
+        return Accept(actor, AbilityId.PlantBomb, now);
+    }
+
+    private bool TrySetTrap(PlayerState actor, Position? requestedPosition, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Trapper)
+            return Reject(actor, AbilityId.SetTrap, now, "トラッパー専用能力です。");
+        if (!CanUse(actor, AbilityId.SetTrap, now))
+            return Reject(actor, AbilityId.SetTrap, now, "罠のクールダウン中です。");
+
+        actor.EffectExpiresAt[AbilityId.SetTrap] = now + _options.TrapDuration;
+        SetCooldown(actor, AbilityId.SetTrap, now, _options.SpecialAbilityCooldown);
+        _gateway.Emit(new GameEvent(GameEventKind.TrapPlaced, now, actor.PlayerId, Position: requestedPosition ?? actor.Position));
+        return Accept(actor, AbilityId.SetTrap, now);
+    }
+
+    private bool TryTimedEffect(PlayerState actor, RoleId role, AbilityId ability, float now, float duration, string detail, GameEventKind eventKind)
+    {
+        if (actor.PrimaryRole != role)
+            return Reject(actor, ability, now, $"{RoleCatalog.Get(role).DisplayName}専用能力です。");
+        if (!CanUse(actor, ability, now))
+            return Reject(actor, ability, now, $"{detail}のクールダウン中です。");
+
+        actor.EffectExpiresAt[ability] = now + duration;
+        SetCooldown(actor, ability, now, _options.SpecialAbilityCooldown);
+        _gateway.Emit(new GameEvent(eventKind, now, actor.PlayerId, Detail: duration.ToString("0.0")));
+        return Accept(actor, ability, now);
+    }
+
+    private bool TrySilence(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Silencer)
+            return Reject(actor, AbilityId.Silence, now, "サイレンサー専用能力です。");
+        if (!CanUse(actor, AbilityId.Silence, now) || !TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.Silence, now, "口封じ対象に近づいてください。");
+        if (actor.EffectTargets.TryGetValue(AbilityId.Silence, out var previous) && previous == target.PlayerId)
+            return Reject(actor, AbilityId.Silence, now, "同じ対象を連続して口封じできません。");
+
+        actor.EffectTargets[AbilityId.Silence] = target.PlayerId;
+        target.EffectExpiresAt[AbilityId.Silence] = now + _options.SilenceDuration;
+        SetCooldown(actor, AbilityId.Silence, now, _options.SpecialAbilityCooldown);
+        _gateway.Emit(new GameEvent(GameEventKind.SilenceApplied, now, actor.PlayerId, target.PlayerId));
+        return Accept(actor, AbilityId.Silence, now);
+    }
+
+    private bool TryAnimateBody(PlayerState actor, byte? bodyOwnerId, Position? position, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Necromancer)
+            return Reject(actor, AbilityId.AnimateBody, now, "ネクロマンサー専用能力です。");
+        if (!CanUse(actor, AbilityId.AnimateBody, now) || !TryGetBodyTarget(actor, bodyOwnerId, out var body))
+            return Reject(actor, AbilityId.AnimateBody, now, "操縦できる死体に近づいてください。");
+
+        var destination = position ?? actor.Position;
+        _bodies[body.OwnerId] = body with { Position = destination };
+        SetCooldown(actor, AbilityId.AnimateBody, now, _options.SpecialAbilityCooldown);
+        _gateway.Emit(new GameEvent(GameEventKind.BodyAnimated, now, actor.PlayerId, body.OwnerId, Position: destination));
+        return Accept(actor, AbilityId.AnimateBody, now);
+    }
+
+    private bool TryLinkCurse(PlayerState actor, byte? targetId, float now)
+    {
+        if (actor.PrimaryRole != RoleId.Witch)
+            return Reject(actor, AbilityId.LinkCurse, now, "ウィッチ専用能力です。");
+        if (!TryGetLivingTarget(actor, targetId, now, out var target))
+            return Reject(actor, AbilityId.LinkCurse, now, "リンク対象に近づいてください。");
+
+        if (actor.EffectTargets.TryGetValue(AbilityId.LinkCurse, out var firstTargetId))
+        {
+            if (firstTargetId == target.PlayerId)
+                return Reject(actor, AbilityId.LinkCurse, now, "別のプレイヤーを選んでください。");
+            actor.EffectTargets.Remove(AbilityId.LinkCurse);
+            actor.SecondaryEffectTargetId = null;
+            _witchLinks[firstTargetId] = target.PlayerId;
+            _witchLinks[target.PlayerId] = firstTargetId;
+            SetCooldown(actor, AbilityId.LinkCurse, now, _options.SpecialAbilityCooldown);
+            _gateway.Emit(new GameEvent(GameEventKind.WitchLinked, now, actor.PlayerId, target.PlayerId, firstTargetId.ToString()));
+            return Accept(actor, AbilityId.LinkCurse, now);
+        }
+
+        actor.EffectTargets[AbilityId.LinkCurse] = target.PlayerId;
+        actor.SecondaryEffectTargetId = target.PlayerId;
+        return Accept(actor, AbilityId.LinkCurse, now);
+    }
+
+    private bool TryCheckBounty(PlayerState actor, float now)
+    {
+        if (actor.PrimaryRole != RoleId.BountyHunter)
+            return Reject(actor, AbilityId.CheckBounty, now, "バウンティハンター専用能力です。");
+        var target = _players.Values.FirstOrDefault(player => player.IsAlive && player.PlayerId != actor.PlayerId && RoleCatalog.GetFaction(player.PrimaryRole) != Faction.Impostor);
+        if (target == null)
+            return Reject(actor, AbilityId.CheckBounty, now, "有効なターゲットがいません。");
+        actor.EffectTargets[AbilityId.CheckBounty] = target.PlayerId;
+        _gateway.Emit(new GameEvent(GameEventKind.BountyAssigned, now, actor.PlayerId, target.PlayerId));
+        return Accept(actor, AbilityId.CheckBounty, now);
+    }
+
+    private bool TryGetBodyTarget(PlayerState actor, byte? bodyOwnerId, out BodyState body)
+    {
+        body = default;
+        if (bodyOwnerId is not byte ownerId || !_bodies.TryGetValue(ownerId, out body) || body.IsCarried)
+            return false;
+        return actor.Position.DistanceTo(body.Position) <= _options.KillDistance;
     }
 
     private bool TryDirectKill(PlayerState actor, byte? targetId, float now, bool erased)
@@ -496,6 +943,38 @@ public sealed class RoleEngine
         return Accept(actor, AbilityId.Bite, now);
     }
 
+    private void ResolveAdditionalEffects(float now)
+    {
+        foreach (var cleaner in _players.Values.Where(player => player.EffectExpiresAt.TryGetValue(AbilityId.Clean, out var cleanEndsAt) && cleanEndsAt <= now).ToArray())
+        {
+            cleaner.EffectExpiresAt.Remove(AbilityId.Clean);
+            cleaner.ImmobilizedUntil = 0;
+            if (cleaner.EffectTargets.Remove(AbilityId.Clean, out var bodyOwnerId) && _bodies.Remove(bodyOwnerId))
+                _gateway.Emit(new GameEvent(GameEventKind.BodyCleaned, now, cleaner.PlayerId, bodyOwnerId));
+        }
+
+        foreach (var bomber in _players.Values.Where(player => player.EffectExpiresAt.TryGetValue(AbilityId.PlantBomb, out var bombEndsAt) && bombEndsAt <= now).ToArray())
+        {
+            bomber.EffectExpiresAt.Remove(AbilityId.PlantBomb);
+            if (!bomber.EffectTargets.Remove(AbilityId.PlantBomb, out var targetId) || !_players.TryGetValue(targetId, out var target) || !target.IsAlive)
+                continue;
+            var victims = _players.Values.Where(player => player.IsAlive && player.PlayerId != bomber.PlayerId && player.Position.DistanceTo(target.Position) <= _options.BombRadius).Select(player => player.PlayerId).ToArray();
+            foreach (var victimId in victims)
+                KillPlayer(victimId, bomber.PlayerId, now, "時限爆弾", silent: false, erased: false);
+            _gateway.Emit(new GameEvent(GameEventKind.BombExploded, now, bomber.PlayerId, targetId));
+        }
+
+        foreach (var player in _players.Values)
+        {
+            foreach (var ability in player.EffectExpiresAt.Where(effect => effect.Value <= now).Select(effect => effect.Key).ToArray())
+            {
+                player.EffectExpiresAt.Remove(ability);
+                if (ability == AbilityId.Morph)
+                    player.ImmobilizedUntil = now + 1f;
+            }
+        }
+    }
+
     private void ResolveExpiredBites(float now)
     {
         foreach (var target in _players.Values.Where(x => x.IsAlive && x.BiteExpiresAt > 0 && x.BiteExpiresAt <= now).ToArray())
@@ -572,6 +1051,12 @@ public sealed class RoleEngine
         if (erased)
             _gateway.Emit(new GameEvent(GameEventKind.RoleErased, now, killerId, targetId));
 
+        if (_witchLinks.Remove(targetId, out var linkedId) && _players.TryGetValue(linkedId, out var linked) && linked.IsAlive)
+        {
+            _witchLinks.Remove(linkedId);
+            KillPlayer(linkedId, killerId, now, "呪詛リンク", silent: false, erased: false);
+        }
+
         if (_lovers.TryGetValue(targetId, out var partnerId) && _players.TryGetValue(partnerId, out var partner) && partner.IsAlive)
         {
             _gateway.Emit(new GameEvent(GameEventKind.LoversTriggered, now, targetId, partnerId));
@@ -593,10 +1078,28 @@ public sealed class RoleEngine
             return result;
         }
 
-        var jackals = alive.Where(x => x.PrimaryRole == RoleId.Jackal).ToArray();
-        if (jackals.Length == 1 && alive.Length == 1)
+        var jackalTeam = alive.Where(x => x.PrimaryRole is RoleId.Jackal or RoleId.Sidekick).ToArray();
+        var livingImpostors = alive.Where(x => RoleCatalog.GetFaction(x.PrimaryRole) == Faction.Impostor).ToArray();
+        var livingCrew = alive.Where(x => RoleCatalog.GetFaction(x.PrimaryRole) == Faction.Crew).ToArray();
+        if (livingImpostors.Length == 0 && jackalTeam.Length > 0 && livingCrew.Length <= jackalTeam.Length)
         {
-            var result = new VictoryResult(VictoryKind.Jackal, new[] { jackals[0].PlayerId });
+            var result = new VictoryResult(VictoryKind.Jackal, jackalTeam.Select(x => x.PlayerId).ToArray());
+            EmitVictory(result, now);
+            return result;
+        }
+
+        var zombieTeam = alive.Where(x => x.PrimaryRole is RoleId.Zombie or RoleId.ChildZombie).ToArray();
+        if (zombieTeam.Length > 0 && zombieTeam.Length == alive.Length)
+        {
+            var result = new VictoryResult(VictoryKind.Zombie, zombieTeam.Select(x => x.PlayerId).ToArray());
+            EmitVictory(result, now);
+            return result;
+        }
+
+        var vultures = alive.Where(x => x.PrimaryRole == RoleId.Vulture && x.EffectCounts.TryGetValue(AbilityId.CollectBody, out var collected) && collected >= 3).ToArray();
+        if (vultures.Length > 0)
+        {
+            var result = new VictoryResult(VictoryKind.Vulture, vultures.Select(x => x.PlayerId).ToArray());
             EmitVictory(result, now);
             return result;
         }
@@ -609,11 +1112,14 @@ public sealed class RoleEngine
             return result;
         }
 
-        var impostors = alive.Where(x => RoleCatalog.GetFaction(x.PrimaryRole) == Faction.Impostor).ToArray();
+        var impostors = livingImpostors;
         var nonImpostors = alive.Length - impostors.Length;
         if (impostors.Length > 0 && impostors.Length >= nonImpostors)
         {
-            var result = new VictoryResult(VictoryKind.Impostors, impostors.Select(x => x.PlayerId).ToArray());
+            var winners = impostors.Select(x => x.PlayerId)
+                .Concat(alive.Where(x => x.PrimaryRole is RoleId.Advocate or RoleId.Clown or RoleId.Fanatic).Select(x => x.PlayerId))
+                .Distinct().ToArray();
+            var result = new VictoryResult(VictoryKind.Impostors, winners);
             EmitVictory(result, now);
             return result;
         }
