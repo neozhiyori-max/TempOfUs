@@ -161,10 +161,10 @@ internal static class MeetingHudCmdCastVotePatch
 [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.RpcClose))]
 internal static class MeetingHudRpcClosePatch
 {
-    private static void Postfix()
+    private static void Postfix(MeetingHud __instance)
     {
         MadGuesserMeetingPresenter.CloseRoleList();
-        TempModPlugin.Runtime.OnMeetingClosed();
+        TempModPlugin.Runtime.OnMeetingClosed(__instance);
     }
 }
 

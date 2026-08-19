@@ -8,6 +8,9 @@ The start-of-game role-introduction integration in this project is based on the 
 
 The tempMOD implementation has been adapted for the current project structure and the user's specified roles. Changes include the custom role domain model, host-authoritative assignment state, Japanese settings interface, faction-level role limits, and tempMOD-specific game integration.
 
+## SuperNewRoles Jackal and Sidekick role notice
+The Jackal and Sidekick role flow is adapted from the GPL-3.0 SuperNewRoles sources at commit `713c98779e14000479f7578a28705264645f07e5`, specifically `Roles/Ability/JackalAbility.cs`, `Roles/Ability/CustomSidekickButtonAbility.cs`, `Roles/Ability/JSidekickAbility.cs`, `Modules/ExPlayerControl.cs`, and `Modules/CheckEndGame.cs`. tempMOD adapts that role flow to its host-authoritative `RoleEngine` and current Steam IL2CPP integration. The complete role-level source mapping, exact differences, and future migration status are published in [`docs/ROLE_MIGRATION_PLAN_JA.md`](./docs/ROLE_MIGRATION_PLAN_JA.md).
+
 ## Corresponding source
 
 When distributing a compiled `TempMod.dll`, distribute or provide a direct link to the complete corresponding source code for the exact build, together with this notice and the full GPL-3.0 license text. Preserve upstream copyright and license notices for any files copied or modified from SuperNewRoles.

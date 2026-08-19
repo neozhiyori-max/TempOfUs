@@ -9,6 +9,8 @@ game_refs/
 ReferenceMods/
 reference_nebula/
 reference_snr/
+references/
+.work_*
 video_*_analysis_*.md
 nebula_ui_video_analysis.md
 

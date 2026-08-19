@@ -34,9 +34,11 @@ internal sealed class TempModRuntime : IRoleGameGateway
     private bool _resultSentToChat;
     private bool _omniscienceShown;
     private AbilityId _armedMeetingAbility;
-    private RoleId _meetingGuessRole = RoleId.Sheriff;
+        private RoleId _meetingGuessRole = RoleId.Sheriff;
     private bool _roleDescriptionChatShown;
-
+    private bool _freeplayPracticeApplied;
+    private bool _freeplayPracticeWaitingLogged;
+    private bool _wasInFreeplay;
     internal TempModRuntime(ManualLogSource log, TempModSettings settings)
     {
         _log = log;
@@ -50,6 +52,23 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
     internal void OnGameStarted()
     {
+        if (IsFreeplayMode())
+        {
+            _wasInFreeplay = true;
+            ResetRuntimeState();
+            _freeplayPracticeApplied = false;
+            _freeplayPracticeWaitingLogged = false;
+            _log.LogInfo("tempMOD: フリープレイ開始を検出しました。本体の正規ダミーを待って固定検証役職を配布します。");
+            return;
+        }
+
+        // フリープレイから戻った後に役職状態を持ち越さない。オンライン・ローカルロビーは従来の抽選フローへ戻す。
+        if (_wasInFreeplay)
+        {
+            _wasInFreeplay = false;
+            ResetRuntimeState();
+        }
+
         // OnGameStartは開始演出の後に呼ばれる版がある。抽選済みの状態をここで初期化すると
         // タスク表示・キル判定から役職が消えるため、未割当時だけ初期化する。
         if (_assignmentReceived)
@@ -57,16 +76,15 @@ internal sealed class TempModRuntime : IRoleGameGateway
             _log.LogInfo("tempMOD: PlayerControl.OnGameStart を受信しましたが、役職割当済みのため状態を保持します。");
             return;
         }
-        _engine = new RoleEngine(this, _settings.CreateRoleOptions());
-        _introRoleLogged = false;
-        _omniscienceShown = false;
-        _roleDescriptionChatShown = false;
-        _movementFrozenByTempMod.Clear();
+        ResetRuntimeState();
         _log.LogInfo("tempMOD: PlayerControl.OnGameStart を受信しました。開始演出で役職を確定します。");
     }
 
     internal void OnIntroStarted()
     {
+        // フリープレイは本体の正規ダミーを待つため、オンライン用のカスタムRPC割当を使わない。
+        if (IsFreeplayMode())
+            return;
         if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost)
             return;
         if (_assignmentReceived)
@@ -166,16 +184,29 @@ internal sealed class TempModRuntime : IRoleGameGateway
             _engine.StartMeeting(Time.time);
     }
 
-    internal void OnMeetingClosed()
+    internal void OnMeetingClosed(MeetingHud? meetingHud)
     {
         // 会議専用能力を構えたまま閉じても、次の会議へ対象待機状態を持ち越さない。
         _armedMeetingAbility = 0;
-        // 追放対象の確定処理はMeetingHudの投票確定パッチから呼び出す。
-        // 現段階では会議終了後の一時効果解除だけをRoleEngineに委譲する。
+        if (!_assignmentReceived || !_engine.IsMeetingActive)
+            return;
+
+        // MeetingHud.RpcCloseは、ゲーム本体が既に追放演出・死亡状態を反映した後に呼ばれる。
+        // RoleEngine側も必ず会議状態を解除しないと、通常HUD・Tick・能力入力が永久に会議中のまま止まる。
+        byte? exiledPlayerId = meetingHud?.exiledPlayer != null ? meetingHud.exiledPlayer.PlayerId : null;
+        var isHost = AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost;
+        _engine.EndMeeting(exiledPlayerId, Time.time, vanillaExileAlreadyApplied: true, evaluateVictory: isHost);
+        if (isHost)
+            BroadcastReplicatedState();
     }
 
     internal void OnPlayerTick(PlayerControl player)
     {
+        if (IsFreeplayMode())
+        {
+            _wasInFreeplay = true;
+            TryApplyFreeplayPracticeAssignment();
+        }
         if (!_assignmentReceived || player == null || player.Data == null || player.Data.IsDead)
             return;
 
@@ -210,6 +241,9 @@ internal sealed class TempModRuntime : IRoleGameGateway
         if (PlayerControl.LocalPlayer != null && player.PlayerId == PlayerControl.LocalPlayer.PlayerId)
         {
             ReconcileBodyVisuals();
+            // SuperNewRolesのKnowOtherAbilityと同じ目的で、ジャッカル／サイドキック間だけ名前を赤く表示する。
+            // 会議・役職同期・本体の表示更新で色が戻るため、ローカル視点の確定状態に基づき毎フレーム再適用する。
+            ApplyJackalTeamNameColors();
             ShowRoleDescriptionChatIfNeeded(player);
             ShowOmniscienceIfNeeded(player);
             if (Input.GetKeyDown(KeyCode.F))
@@ -225,6 +259,14 @@ internal sealed class TempModRuntime : IRoleGameGateway
             return;
         if (!_engine.Players.TryGetValue(player.PlayerId, out var state))
             return;
+
+        // フリープレイでは、本体が管理するダミーのネイティブ役職へ介入しない。
+        // キル・ベントを必要とするローカルプレイヤーだけを標準インポスター基盤へ同期する。
+        if (IsFreeplayMode() && (PlayerControl.LocalPlayer == null || player.PlayerId != PlayerControl.LocalPlayer.PlayerId))
+        {
+            _nativeRolesApplied.Add(player.PlayerId);
+            return;
+        }
 
         // カスタム役職がゲーム本体のクルー状態のままだと、キル・ベントHUDが生成されない。
         // インポスター陣営とキル可能な第三陣営を標準インポスター基盤へ同期し、
@@ -252,12 +294,18 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
         byte? targetId = ability switch
         {
-            AbilityId.Kill or AbilityId.Bite or AbilityId.EraseKill or AbilityId.Track or AbilityId.GrantBarrier or AbilityId.Curse or AbilityId.Puppet or AbilityId.CollectDna or AbilityId.PlantBomb or AbilityId.Silence or AbilityId.RecruitSidekick or AbilityId.InfectKill or AbilityId.ConfusionGas or AbilityId.AbsoluteDefense or AbilityId.FanaticWorship or AbilityId.Assassinate or AbilityId.Douse => FindNearestLivingPlayer(actor.PlayerId),
+            AbilityId.Kill or AbilityId.Bite or AbilityId.EraseKill or AbilityId.Track or AbilityId.GrantBarrier or AbilityId.Curse or AbilityId.Puppet or AbilityId.CollectDna or AbilityId.PlantBomb or AbilityId.Silence or AbilityId.InfectKill or AbilityId.ConfusionGas or AbilityId.AbsoluteDefense or AbilityId.FanaticWorship or AbilityId.Assassinate or AbilityId.Douse => FindNearestLivingPlayer(actor.PlayerId),
+            AbilityId.RecruitSidekick => FindNearestRecruitableCrewmate(actor.PlayerId),
             AbilityId.CarryBody or AbilityId.Clean or AbilityId.Devour or AbilityId.AnimateBody or AbilityId.CollectBody => FindNearestBody(actor.PlayerId),
             AbilityId.SpeakWithDead => FindAnyDeadPlayer(),
             _ => null,
         };
 
+        if (ability == AbilityId.RecruitSidekick && targetId is null)
+        {
+            HudManager.Instance?.ShowPopUp("<color=#FF6666>勧誘失敗</color>\n近くに勧誘可能なクルーメイトがいません。");
+            return false;
+        }
         if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
             return _engine.TryHandleAbility(new AbilityRequest(actor.PlayerId, ability, targetId, state.Position, Time.time), Time.time);
 
@@ -426,18 +474,21 @@ internal sealed class TempModRuntime : IRoleGameGateway
         var remaining = player.AbilityCooldowns.TryGetValue(ability, out var endsAt) ? Math.Max(0f, endsAt - Time.time) : 0f;
         var targetAvailable = ability switch
         {
-            AbilityId.Kill or AbilityId.Bite or AbilityId.EraseKill or AbilityId.Track or AbilityId.GrantBarrier or AbilityId.Curse or AbilityId.Puppet or AbilityId.CollectDna or AbilityId.PlantBomb or AbilityId.Silence or AbilityId.RecruitSidekick or AbilityId.InfectKill or AbilityId.ConfusionGas or AbilityId.AbsoluteDefense or AbilityId.FanaticWorship or AbilityId.Assassinate or AbilityId.Douse => FindNearestLivingPlayer(player.PlayerId) is not null,
+            AbilityId.Kill or AbilityId.Bite or AbilityId.EraseKill or AbilityId.Track or AbilityId.GrantBarrier or AbilityId.Curse or AbilityId.Puppet or AbilityId.CollectDna or AbilityId.PlantBomb or AbilityId.Silence or AbilityId.InfectKill or AbilityId.ConfusionGas or AbilityId.AbsoluteDefense or AbilityId.FanaticWorship or AbilityId.Assassinate or AbilityId.Douse => FindNearestLivingPlayer(player.PlayerId) is not null,
+            AbilityId.RecruitSidekick => FindNearestRecruitableCrewmate(player.PlayerId) is not null,
             AbilityId.CarryBody or AbilityId.Clean or AbilityId.Devour or AbilityId.AnimateBody or AbilityId.CollectBody => FindNearestBody(player.PlayerId) is not null,
             AbilityId.SpeakWithDead => FindAnyDeadPlayer() is not null,
             _ => true,
         };
         var uses = player.PrimaryRole == RoleId.Sheriff ? player.SheriffKillsRemaining : -1;
-        var color = RoleCatalog.Get(player.PrimaryRole).Faction switch
-        {
-            Faction.Crew => new Color(0.35f, 0.85f, 1f),
-            Faction.Impostor => new Color(1f, 0.35f, 0.35f),
-            _ => new Color(0.82f, 0.48f, 1f),
-        };
+        var color = player.PrimaryRole is RoleId.Jackal or RoleId.Sidekick
+            ? Palette.ImpostorRed
+            : RoleCatalog.Get(player.PrimaryRole).Faction switch
+            {
+                Faction.Crew => new Color(0.35f, 0.85f, 1f),
+                Faction.Impostor => new Color(1f, 0.35f, 0.35f),
+                _ => new Color(0.82f, 0.48f, 1f),
+            };
         state = new AbilityButtonState(label, label, remaining <= 0f && targetAvailable, remaining, uses, color);
         return true;
     }
@@ -704,6 +755,9 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
     private void BroadcastReplicatedState()
     {
+        // フリープレイは完全にオフラインの固定検証であり、tempMODのカスタムRPCを送信しない。
+        if (IsFreeplayMode())
+            return;
         if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost || PlayerControl.LocalPlayer == null)
             return;
 
@@ -835,23 +889,53 @@ internal sealed class TempModRuntime : IRoleGameGateway
         _log.LogDebug($"tempMOD: ホスト確定状態を受信しました。players={players.Count}, bodies={bodies.Count}");
     }
 
+    /// <summary>
+    /// SuperNewRolesのKnowOtherAbility相当。ローカルプレイヤーがジャッカル陣営の時だけ、
+    /// ジャッカルとサイドキックを相互にインポスター赤で可視化する。
+    /// </summary>
+    private void ApplyJackalTeamNameColors()
+    {
+        var localPlayer = PlayerControl.LocalPlayer;
+        if (localPlayer == null || !_engine.IsJackalTeamMember(localPlayer.PlayerId))
+            return;
+
+        var allPlayers = PlayerControl.AllPlayerControls;
+        for (var index = 0; index < allPlayers.Count; index++)
+        {
+            var player = allPlayers[index];
+            if (player?.cosmetics?.nameText == null)
+                continue;
+            if (_engine.IsJackalTeamMember(player.PlayerId))
+                player.cosmetics.nameText.color = Palette.ImpostorRed;
+        }
+    }
+
     private byte? FindNearestLivingPlayer(byte actorId)
     {
         if (!_engine.Players.TryGetValue(actorId, out var actor))
             return null;
-        return _engine.Players.Values
-            .Where(player => player.IsAlive && player.PlayerId != actorId)
+                return _engine.Players.Values
+            .Where(player => player.IsAlive && player.PlayerId != actorId && player.Position.DistanceTo(actor.Position) <= _engine.TargetRange)
             .OrderBy(player => player.Position.DistanceTo(actor.Position))
             .Select(player => (byte?)player.PlayerId)
             .FirstOrDefault();
     }
-
+    private byte? FindNearestRecruitableCrewmate(byte actorId)
+    {
+        if (!_engine.Players.TryGetValue(actorId, out var actor))
+            return null;
+        return _engine.Players.Values
+            .Where(player => player.IsAlive && player.PlayerId != actorId && RoleCatalog.GetFaction(player.PrimaryRole) == Faction.Crew && player.Position.DistanceTo(actor.Position) <= _engine.TargetRange)
+            .OrderBy(player => player.Position.DistanceTo(actor.Position))
+            .Select(player => (byte?)player.PlayerId)
+            .FirstOrDefault();
+    }
     private byte? FindNearestBody(byte actorId)
     {
         if (!_engine.Players.TryGetValue(actorId, out var actor))
             return null;
         return _engine.Bodies.Values
-            .Where(body => !body.IsCarried)
+            .Where(body => !body.IsCarried && body.Position.DistanceTo(actor.Position) <= _engine.TargetRange)
             .OrderBy(body => body.Position.DistanceTo(actor.Position))
             .Select(body => (byte?)body.OwnerId)
             .FirstOrDefault();
@@ -859,6 +943,72 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
     private byte? FindAnyDeadPlayer()
         => _engine.Players.Values.Where(player => !player.IsAlive).Select(player => (byte?)player.PlayerId).FirstOrDefault();
+
+    internal void RequestFreeplayPracticeReapply()
+    {
+        if (!IsFreeplayMode())
+        {
+            _log.LogInfo("tempMOD: フリープレイ以外では1人用検証の適用を行いません。");
+            return;
+        }
+        _freeplayPracticeApplied = false;
+        _freeplayPracticeWaitingLogged = false;
+        _log.LogInfo("tempMOD: 1人用フリープレイ検証の再適用を予約しました。");
+    }
+
+    private static bool IsFreeplayMode()
+        => AmongUsClient.Instance != null && AmongUsClient.Instance.NetworkMode == NetworkModes.FreePlay;
+
+    private void ResetRuntimeState()
+    {
+        _engine = new RoleEngine(this, _settings.CreateRoleOptions());
+        _assignmentReceived = false;
+        _nativeRolesApplied.Clear();
+        _movementFrozenByTempMod.Clear();
+        _resultLines.Clear();
+        _victoryLabel = null;
+        _resultSentToChat = false;
+        _introRoleLogged = false;
+        _omniscienceShown = false;
+        _roleDescriptionChatShown = false;
+        _armedMeetingAbility = 0;
+    }
+
+    private void TryApplyFreeplayPracticeAssignment()
+    {
+        if (_freeplayPracticeApplied || !IsFreeplayMode())
+            return;
+        var localPlayer = PlayerControl.LocalPlayer;
+        if (localPlayer == null || localPlayer.Data == null)
+            return;
+
+        // ここで扱うのは、ゲーム本体が既に生成・登録したPlayerControlだけである。
+        // GameData.AddDummy、Spawn、PlayerPrefab複製、参加者追加は一切行わない。
+        var players = GetAllPlayers()
+            .Where(player => player != null && player.Data != null && !player.Data.Disconnected)
+            .ToList();
+        if (players.Count < 2)
+        {
+            if (!_freeplayPracticeWaitingLogged)
+            {
+                _freeplayPracticeWaitingLogged = true;
+                _log.LogWarning("tempMOD: フリープレイの正規ダミーを待機中です。ゲーム本体のフリープレイ画面へ入り、ダミーが表示されてから検証を開始してください。");
+            }
+            return;
+        }
+
+        var roles = new Dictionary<byte, RoleId>();
+        foreach (var player in players)
+            roles[player.PlayerId] = player.PlayerId == localPlayer.PlayerId ? _settings.FreeplayPracticeRole.Value : _settings.FreeplayDummyRole.Value;
+        var modifiers = roles.Keys.ToDictionary(id => id, _ => (IReadOnlyList<ModifierId>)Array.Empty<ModifierId>());
+        ApplyAssignment(new RoleAssignment(roles, modifiers, Array.Empty<(byte First, byte Second)>()));
+        _freeplayPracticeApplied = true;
+        _freeplayPracticeWaitingLogged = false;
+        var actorRoleName = RoleCatalog.Get(_settings.FreeplayPracticeRole.Value).DisplayName;
+        var dummyRoleName = RoleCatalog.Get(_settings.FreeplayDummyRole.Value).DisplayName;
+        _log.LogInfo($"tempMOD: 1人用プラクティス検証を固定配布しました。自分={actorRoleName}、正規ダミー={dummyRoleName}、対象数={players.Count - 1}");
+        HudManager.Instance?.ShowPopUp($"<color=#8FE9FF>1人用プラクティス検証</color>\n自分: {actorRoleName}\n正規ダミー: {dummyRoleName}\n<color=#78FF91>自動適用完了</color>");
+    }
 
     private void AssignAndBroadcastRoles()
     {
@@ -1044,6 +1194,26 @@ internal sealed class TempModRuntime : IRoleGameGateway
     public void Emit(GameEvent gameEvent)
     {
         _log.LogDebug($"[{gameEvent.Kind}] actor={gameEvent.ActorId}, target={gameEvent.TargetId}, detail={gameEvent.Detail}");
+        if (gameEvent.Kind == GameEventKind.RoleChanged && gameEvent.TargetId is byte changedPlayerId)
+        {
+            // 勧誘・陣営変化では、役職エンジンだけでなくゲーム本体の役職も即座に更新する。
+            // Sidekickはインポスター基盤となるため、ジャッカルの味方として名前色・標準キルHUDが本体側にも反映される。
+            _nativeRolesApplied.Remove(changedPlayerId);
+            var changedPlayer = FindPlayer(changedPlayerId);
+            if (changedPlayer != null)
+                EnsureNativeRole(changedPlayer);
+            if (PlayerControl.LocalPlayer != null && _engine.Players.TryGetValue(changedPlayerId, out var changedState))
+            {
+                var promoted = gameEvent.Detail == "SidekickPromotedToJackal";
+                if (gameEvent.ActorId == PlayerControl.LocalPlayer.PlayerId && !promoted)
+                    HudManager.Instance?.ShowPopUp($"<color=#FF6666>陣営勧誘成功</color>\n{changedState.PlayerName} を{RoleCatalog.Get(changedState.PrimaryRole).DisplayName}にしました");
+                else if (PlayerControl.LocalPlayer.PlayerId == changedPlayerId)
+                {
+                    var title = promoted ? "サイドキック昇格" : "陣営勧誘成功";
+                    HudManager.Instance?.ShowPopUp($"<color=#FF6666>{title}</color>\nあなたは{RoleCatalog.Get(changedState.PrimaryRole).DisplayName}になりました");
+                }
+            }
+        }
         if (_assignmentReceived && AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
             BroadcastReplicatedState();
         if (gameEvent.Kind == GameEventKind.Victory)

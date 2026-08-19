@@ -36,6 +36,8 @@ internal sealed class TempModSettings
     internal ConfigEntry<float> VampireDelay { get; }
     internal ConfigEntry<float> VampireCooldown { get; }
     internal ConfigEntry<float> JackalKillCooldown { get; }
+    internal ConfigEntry<float> JackalSidekickCooldown { get; }
+    internal ConfigEntry<bool> JackalSidekickPromotesOnDeath { get; }
     internal ConfigEntry<float> SpecialAbilityCooldown { get; }
     internal ConfigEntry<float> CleanerDuration { get; }
     internal ConfigEntry<float> BombDelay { get; }
@@ -46,6 +48,8 @@ internal sealed class TempModSettings
     internal ConfigEntry<float> TrapDuration { get; }
     internal ConfigEntry<float> SilenceDuration { get; }
     internal ConfigEntry<float> AlchemyBodyStealthDuration { get; }
+    internal ConfigEntry<RoleId> FreeplayPracticeRole { get; }
+    internal ConfigEntry<RoleId> FreeplayDummyRole { get; }
 
     internal TempModSettings(ConfigFile config)
     {
@@ -54,6 +58,8 @@ internal sealed class TempModSettings
         CrewRoleCount = config.Bind("陣営別人数", "クルー人数", 10, "クルー役職を配布する人数上限です。0～15。");
         NeutralRoleCount = config.Bind("陣営別人数", "第三陣営人数", 1, "第三陣営役職を配布する人数上限です。0～15。");
         EnableLovers = config.Bind("第三陣営: ラバーズ", "ラバーズを有効化", true, "有効時、2人以上のゲームでランダムな2名をラバーズにします。");
+        FreeplayPracticeRole = config.Bind("1人用フリープレイ検証", "自分の役職", RoleId.Undertaker, "フリープレイでローカルプレイヤーへ固定配布する役職です。オンライン・ローカルロビーには適用されません。");
+        FreeplayDummyRole = config.Bind("1人用フリープレイ検証", "正規ダミーの役職", RoleId.Crewmate, "フリープレイでゲーム本体が管理する既存ダミーへ固定配布する役職です。ダミーの生成・複製は行いません。");
 
         SheriffKillLimit = config.Bind("能力: シェリフ", "キル回数上限", 1, "ゲーム中にシェリフが直接キルできる回数です。1～5回。");
         SheriffCanKillNeutrals = config.Bind("能力: シェリフ", "第三陣営をキル可能", true, "有効時、ジャッカル・ヴァンパイアなど第三陣営もキルできます。");
@@ -73,6 +79,8 @@ internal sealed class TempModSettings
         VampireDelay = config.Bind("能力: ヴァンパイア", "噛みつき後の死亡遅延", 10f, "秒単位です。");
         VampireCooldown = config.Bind("能力: ヴァンパイア", "噛みつきクールダウン", 30f, "秒単位です。");
         JackalKillCooldown = config.Bind("能力: ジャッカル", "キルクールダウン", 30f, "秒単位です。");
+        JackalSidekickCooldown = config.Bind("能力: ジャッカル", "サイドキック作成クールダウン", 30f, "秒単位です。ジャッカルのキルとは別に管理します。");
+        JackalSidekickPromotesOnDeath = config.Bind("能力: ジャッカル", "親死亡時にサイドキックを昇格", true, "有効時、親ジャッカルが死亡するとそのサイドキックがジャッカルへ昇格します。");
         SpecialAbilityCooldown = config.Bind("能力: 追加役職共通", "基本クールダウン", 30f, "秒単位です。");
         CleanerDuration = config.Bind("能力: クリーナー", "清掃硬直時間", 3f, "秒単位です。");
         BombDelay = config.Bind("能力: ボマー", "爆発までの時間", 10f, "秒単位です。");
@@ -148,7 +156,12 @@ internal sealed class TempModSettings
             Detail(DetailSettingKey.VampireDelay, "死亡までの時間", Seconds(VampireDelay.Value)),
             Detail(DetailSettingKey.VampireCooldown, "噛みつきクールダウン", Seconds(VampireCooldown.Value)),
         },
-        RoleId.Jackal => new[] { Detail(DetailSettingKey.JackalKillCooldown, "キルクールダウン", Seconds(JackalKillCooldown.Value)) },
+        RoleId.Jackal => new[]
+        {
+            Detail(DetailSettingKey.JackalKillCooldown, "キルクールダウン", Seconds(JackalKillCooldown.Value)),
+            Detail(DetailSettingKey.JackalSidekickCooldown, "サイドキック作成クールダウン", Seconds(JackalSidekickCooldown.Value)),
+            Detail(DetailSettingKey.JackalSidekickPromotesOnDeath, "親死亡時にサイドキックを昇格", JackalSidekickPromotesOnDeath.Value ? "有効" : "無効", isToggle: true),
+        },
         RoleId.Cleaner => new[] { Detail(DetailSettingKey.CleanerDuration, "清掃硬直時間", Seconds(CleanerDuration.Value)) },
         RoleId.Bomber => new[]
         {
@@ -231,6 +244,8 @@ internal sealed class TempModSettings
             case DetailSettingKey.VampireDelay: VampireDelay.Value = AdjustSeconds(VampireDelay, delta); break;
             case DetailSettingKey.VampireCooldown: VampireCooldown.Value = AdjustSeconds(VampireCooldown, delta); break;
             case DetailSettingKey.JackalKillCooldown: JackalKillCooldown.Value = AdjustSeconds(JackalKillCooldown, delta); break;
+            case DetailSettingKey.JackalSidekickCooldown: JackalSidekickCooldown.Value = AdjustSeconds(JackalSidekickCooldown, delta); break;
+            case DetailSettingKey.JackalSidekickPromotesOnDeath: JackalSidekickPromotesOnDeath.Value = !JackalSidekickPromotesOnDeath.Value; break;
             case DetailSettingKey.CleanerDuration: CleanerDuration.Value = AdjustSeconds(CleanerDuration, delta); break;
             case DetailSettingKey.BombDelay: BombDelay.Value = AdjustSeconds(BombDelay, delta); break;
             case DetailSettingKey.BombRadius: BombRadius.Value = Math.Clamp(BombRadius.Value + delta * .5f, .5f, 10f); break;
@@ -251,6 +266,26 @@ internal sealed class TempModSettings
     {
         EnableLovers.Value = !EnableLovers.Value;
         _config.Save();
+    }
+
+    internal void AdjustFreeplayPracticeRole(int delta)
+    {
+        FreeplayPracticeRole.Value = CycleRole(FreeplayPracticeRole.Value, SelectableRoles, delta);
+        _config.Save();
+    }
+
+    internal void AdjustFreeplayDummyRole(int delta)
+    {
+        FreeplayDummyRole.Value = CycleRole(FreeplayDummyRole.Value, FreeplayDummyRoles, delta);
+        _config.Save();
+    }
+
+    private static RoleId CycleRole(RoleId current, IReadOnlyList<RoleId> roles, int delta)
+    {
+        var index = Array.IndexOf(roles.ToArray(), current);
+        if (index < 0)
+            index = 0;
+        return roles[(index + delta % roles.Count + roles.Count) % roles.Count];
     }
 
     internal RoleAssignmentOptions CreateAssignmentOptions()
@@ -290,6 +325,8 @@ internal sealed class TempModSettings
             VampireDelay = Math.Max(0.5f, VampireDelay.Value),
             VampireCooldown = Math.Max(0, VampireCooldown.Value),
             JackalKillCooldown = Math.Max(0, JackalKillCooldown.Value),
+            JackalSidekickCooldown = Math.Max(0, JackalSidekickCooldown.Value),
+            JackalSidekickPromotesOnJackalDeath = JackalSidekickPromotesOnDeath.Value,
             SpecialAbilityCooldown = Math.Max(0, SpecialAbilityCooldown.Value),
             CleanerDuration = Math.Max(0.5f, CleanerDuration.Value),
             BombDelay = Math.Max(0.5f, BombDelay.Value),
@@ -345,6 +382,8 @@ internal sealed class TempModSettings
         VampireDelay,
         VampireCooldown,
         JackalKillCooldown,
+        JackalSidekickCooldown,
+        JackalSidekickPromotesOnDeath,
         CleanerDuration,
         BombDelay,
         BombRadius,
@@ -355,6 +394,25 @@ internal sealed class TempModSettings
         SilenceDuration,
         AlchemyBodyStealthDuration,
     }
+
+    internal static readonly RoleId[] FreeplayDummyRoles =
+    {
+        RoleId.Crewmate, RoleId.Impostor,
+        RoleId.Sheriff, RoleId.Doctor, RoleId.MadScientist, RoleId.Tracker,
+        RoleId.TimeTraveler, RoleId.Seer, RoleId.BarrierNic, RoleId.LightWorker,
+        RoleId.Investigator, RoleId.Mayor, RoleId.Ninja, RoleId.Warlock,
+        RoleId.Mafia, RoleId.Puppeteer, RoleId.Eraser, RoleId.Undertaker,
+        RoleId.Cleaner, RoleId.MadGuesser, RoleId.Morphing, RoleId.Marionette,
+        RoleId.Bomber, RoleId.Spy, RoleId.Trapper, RoleId.Blackout,
+        RoleId.Phantom, RoleId.BountyHunter, RoleId.VampireLord, RoleId.Hacker,
+        RoleId.Illusionist, RoleId.Silencer, RoleId.Gluttony, RoleId.TimeThief,
+        RoleId.Deceptor, RoleId.Necromancer, RoleId.Witch, RoleId.Alchemist,
+        RoleId.Jester, RoleId.Jackal, RoleId.Vampire, RoleId.God,
+        RoleId.SchrodingerCat, RoleId.Zombie, RoleId.Apathy, RoleId.Advocate,
+        RoleId.Clown, RoleId.Arsonist, RoleId.Terrorist, RoleId.Vulture,
+        RoleId.Collector, RoleId.Guardian, RoleId.Fanatic, RoleId.Thief,
+        RoleId.GhostHunter, RoleId.Bouncer, RoleId.Spectator, RoleId.Assassin,
+    };
 
     internal static readonly RoleId[] SelectableRoles =
     {

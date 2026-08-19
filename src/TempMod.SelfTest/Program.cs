@@ -15,6 +15,19 @@ var tests = new (string Name, Action Run)[]
     ("クリーナーは死体を清掃できる", CleanerRemovesBody),
     ("ボマーは時限爆弾で周囲を巻き込む", BomberExplodesNearbyPlayers),
     ("ジャッカルはクルーをサイドキックに勧誘できる", JackalRecruitsSidekick),
+    ("ジャッカル勧誘は役職変更イベントを通知する", JackalRecruitEmitsRoleChanged),
+    ("ジャッカルはクルー以外を勧誘できない", JackalCannotRecruitNonCrew),
+    ("ジャッカルが勧誘できるサイドキックは1人だけ", JackalCanRecruitOnlyOneSidekick),
+    ("ジャッカル勧誘は専用クールダウンを使う", JackalRecruitUsesDedicatedCooldown),
+    ("親ジャッカル死亡時にサイドキックが昇格する", SidekickPromotesWhenParentJackalDies),
+    ("ジャッカルは別第三陣営キラーが残る間は勝利しない", JackalDoesNotWinWhileEnemyKillerLives),
+    ("ジャッカルはサイドキックをキルできない", JackalCannotKillSidekick),
+    ("サイドキックはジャッカルをキルできない", SidekickCannotKillJackal),
+    ("サイドキックはジャッカル以外をキルできる", SidekickCanKillEnemy),
+    ("会議終了後に会議状態が解除される", MeetingEndRestoresNormalState),
+    ("会議追放されたジェスターは勝利する", ExiledJesterWins),
+    ("全役職に定義が存在する", EveryRoleHasDefinition),
+    ("全役職に説明が存在する", EveryRoleHasDescription),
     ("ゾンビはクルーを子ゾンビに感染できる", ZombieInfectsCrew),
     ("ハゲタカの死体回収数は時間経過後も残る", VultureCollectionCountPersists),
     ("マッドゲッサーは会議中の正解で対象をキルできる", MadGuesserKillsCorrectRole),
@@ -222,6 +235,150 @@ static void JackalRecruitsSidekick()
     Assert(engine.Players[2].PrimaryRole == RoleId.Sidekick);
 }
 
+static void JackalRecruitEmitsRoleChanged()
+{
+    var (engine, gateway) = CreateEngine();
+    engine.AssignRole(1, RoleId.Jackal);
+    engine.AssignRole(2, RoleId.Crewmate);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.RecruitSidekick, 2, null, 2), 2));
+    Assert(gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.RoleChanged && gameEvent.ActorId == 1 && gameEvent.TargetId == 2 && gameEvent.Detail == RoleId.Sidekick.ToString()));
+}
+static void JackalCannotRecruitNonCrew()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Jackal);
+    engine.AssignRole(2, RoleId.Impostor);
+    Assert(!engine.TryHandleAbility(new AbilityRequest(1, AbilityId.RecruitSidekick, 2, null, 2), 2));
+    Assert(engine.Players[2].PrimaryRole == RoleId.Impostor);
+}
+static void JackalCanRecruitOnlyOneSidekick()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Jackal);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.AssignRole(3, RoleId.Crewmate);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.RecruitSidekick, 2, null, 2), 2));
+    Assert(!engine.TryHandleAbility(new AbilityRequest(1, AbilityId.RecruitSidekick, 3, null, 3), 3));
+    Assert(engine.Players[2].PrimaryRole == RoleId.Sidekick);
+    Assert(engine.Players[3].PrimaryRole == RoleId.Crewmate);
+}
+static void JackalRecruitUsesDedicatedCooldown()
+{
+    var gateway = new TestGateway();
+    var engine = new RoleEngine(gateway, new RoleOptions
+    {
+        StandardKillCooldown = 0,
+        JackalKillCooldown = 0,
+        JackalSidekickCooldown = 17,
+        KillDistance = 3,
+    });
+    engine.RegisterPlayer(1, "Jackal");
+    engine.RegisterPlayer(2, "Crew");
+    engine.UpdatePosition(1, new Position(0, 0), 1);
+    engine.UpdatePosition(2, new Position(1, 0), 1);
+    engine.AssignRole(1, RoleId.Jackal);
+    engine.AssignRole(2, RoleId.Crewmate);
+
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.RecruitSidekick, 2, null, 2), 2));
+    Assert(engine.Players[1].AbilityCooldowns[AbilityId.RecruitSidekick] == 19);
+    Assert(!engine.Players[1].AbilityCooldowns.ContainsKey(AbilityId.Kill));
+}
+
+static void SidekickPromotesWhenParentJackalDies()
+{
+    var (engine, gateway) = CreateEngine();
+    engine.AssignRole(1, RoleId.Jackal);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.AssignRole(3, RoleId.Impostor);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.RecruitSidekick, 2, null, 2), 2));
+    Assert(engine.Players[2].PrimaryRole == RoleId.Sidekick);
+
+    Assert(engine.TryHandleAbility(new AbilityRequest(3, AbilityId.Kill, 1, null, 3), 3));
+    Assert(!engine.Players[1].IsAlive);
+    Assert(engine.Players[2].PrimaryRole == RoleId.Jackal);
+    Assert(!engine.Players[2].EffectTargets.ContainsKey(AbilityId.RecruitSidekick));
+    Assert(gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.RoleChanged && gameEvent.TargetId == 2 && gameEvent.Detail == "SidekickPromotedToJackal"));
+}
+
+static void JackalDoesNotWinWhileEnemyKillerLives()
+{
+    var (engine, gateway) = CreateEngine();
+    engine.AssignRole(1, RoleId.Jackal);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.AssignRole(3, RoleId.Vampire);
+
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Kill, 2, null, 2), 2));
+    Assert(!gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.Victory && gameEvent.Detail == VictoryKind.Jackal.ToString()));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Kill, 3, null, 33), 33));
+    Assert(gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.Victory && gameEvent.Detail == VictoryKind.Jackal.ToString()));
+}
+
+static void JackalCannotKillSidekick()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Jackal);
+    engine.AssignRole(2, RoleId.Crewmate);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.RecruitSidekick, 2, null, 2), 2));
+    Assert(!engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Kill, 2, null, 3), 3));
+    Assert(engine.Players[1].IsAlive && engine.Players[2].IsAlive);
+}
+static void SidekickCannotKillJackal()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Jackal);
+    engine.AssignRole(2, RoleId.Crewmate);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.RecruitSidekick, 2, null, 2), 2));
+    Assert(!engine.TryHandleAbility(new AbilityRequest(2, AbilityId.Kill, 1, null, 3), 3));
+    Assert(engine.Players[1].IsAlive && engine.Players[2].IsAlive);
+}
+static void SidekickCanKillEnemy()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Jackal);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.AssignRole(3, RoleId.Crewmate);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.RecruitSidekick, 2, null, 2), 2));
+    Assert(engine.TryHandleAbility(new AbilityRequest(2, AbilityId.Kill, 3, null, 3), 3));
+    Assert(!engine.Players[3].IsAlive);
+}
+static void MeetingEndRestoresNormalState()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Jackal);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.StartMeeting(2);
+    Assert(engine.IsMeetingActive);
+    engine.EndMeeting(null, 5, vanillaExileAlreadyApplied: true, evaluateVictory: false);
+    Assert(!engine.IsMeetingActive);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Kill, 2, null, 6), 6));
+    Assert(!engine.Players[2].IsAlive);
+}
+static void ExiledJesterWins()
+{
+    var (engine, gateway) = CreateEngine();
+    engine.AssignRole(1, RoleId.Jester);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.StartMeeting(2);
+    var result = engine.EndMeeting(1, 3);
+    Assert(!engine.IsMeetingActive);
+    Assert(!engine.Players[1].IsAlive);
+    Assert(result.Kind == VictoryKind.Jester);
+    Assert(gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.Victory && gameEvent.Detail == VictoryKind.Jester.ToString()));
+}
+static void EveryRoleHasDefinition()
+{
+    foreach (var role in Enum.GetValues<RoleId>())
+    {
+        var definition = RoleCatalog.Get(role);
+        Assert(definition.Id == role);
+        Assert(!string.IsNullOrWhiteSpace(definition.DisplayName));
+    }
+}
+static void EveryRoleHasDescription()
+{
+    foreach (var role in Enum.GetValues<RoleId>())
+        Assert(!string.IsNullOrWhiteSpace(RoleDescriptionCatalog.Get(role)));
+}
 static void ZombieInfectsCrew()
 {
     var (engine, _) = CreateEngine();

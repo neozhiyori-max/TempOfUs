@@ -169,6 +169,7 @@ public enum GameEventKind : byte
     BodyAnimated,
     WitchLinked,
     BodyHidden,
+    RoleChanged,
 }
 
 public enum VictoryKind : byte
@@ -242,6 +243,10 @@ public sealed class RoleOptions
     public float VampireDelay { get; init; } = 10f;
     public float VampireCooldown { get; init; } = 30f;
     public float JackalKillCooldown { get; init; } = 30f;
+    /// <summary>SuperNewRolesのJackalAbilityに合わせた、サイドキック作成専用クールダウン。</summary>
+    public float JackalSidekickCooldown { get; init; } = 30f;
+    /// <summary>親ジャッカル死亡時に、存命のサイドキックをジャッカルへ昇格させる。</summary>
+    public bool JackalSidekickPromotesOnJackalDeath { get; init; } = true;
     public float SpecialAbilityCooldown { get; init; } = 30f;
     public float CleanerDuration { get; init; } = 3f;
     public float BombDelay { get; init; } = 10f;

@@ -53,7 +53,7 @@ internal static class LobbySettingsPresenter
         }, "NeutralLimit");
         CreateActionRow(menu, ref y, "<color=#D890FF>◆ 第三陣営役職の詳細</color>", "神・ジェスター・ゾンビなど20役職", "開く", () => ShowRoleList(menu, "第三陣営"), "OpenNeutral");
         CreateStaticRow(menu, ref y, "出現率", "10%刻みで変更できます", "ChanceHelp");
-        CreateStaticRow(menu, ref y, "少人数開始", "1人から開始可能。ラバーズは2人以上で有効です。", "PlayerCountHelp");
+        CreateActionRow(menu, ref y, "<color=#8FE9FF>◆ 1人用フリープレイ検証</color>", "ゲーム本体の正規ダミーだけを使用", "設定", () => ShowFreeplayPractice(menu), "FreeplayPractice");
         CreateHeader(menu, ref y, "<color=#FFCF5A>ゲーム制御</color>", "ホストのみ変更できます。通常のマルチプレイではOFFを推奨します");
         CreateTwoWayRow(menu, ref y, "ゲームを終了しない", TempModPlugin.MatchSettings.PreventGameEnd.Value ? "<color=#78FF91>ON</color>" : "<color=#FF7777>OFF</color>", "OFF", "ON", () =>
         {
@@ -65,6 +65,37 @@ internal static class LobbySettingsPresenter
             ShowCategoryList(menu);
         }, "PreventGameEnd");
         CreateStaticRow(menu, ref y, "廃村", "ホスト: Shift + L + Enter", "Abandon");
+    }
+
+    internal static void ShowFreeplayPractice(GameOptionsMenu menu)
+    {
+        Prepare(menu);
+        var y = GameOptionsMenu.START_POS_Y - 0.10f;
+        var isFreeplay = AmongUsClient.Instance != null && AmongUsClient.Instance.NetworkMode == NetworkModes.FreePlay;
+        var mode = isFreeplay ? "<color=#78FF91>プラクティスを検出しました。固定配布済みです</color>" : "<color=#8FE9FF>ここで選択し、プラクティスに入ると自動適用されます</color>";
+        CreateHeader(menu, ref y, "<color=#8FE9FF>1人用プラクティス検証</color>", mode);
+        CreateStaticRow(menu, ref y, "安全設計", "本体が既に管理する正規ダミーだけを使います。生成・複製・参加者追加はしません。", "FreeplaySafety");
+        CreateTwoWayRow(menu, ref y, "自分の役職", RoleCatalog.Get(TempModPlugin.Settings.FreeplayPracticeRole.Value).DisplayName, "前へ", "次へ", () =>
+        {
+            TempModPlugin.Settings.AdjustFreeplayPracticeRole(-1);
+            ShowFreeplayPractice(menu);
+        }, () =>
+        {
+            TempModPlugin.Settings.AdjustFreeplayPracticeRole(+1);
+            ShowFreeplayPractice(menu);
+        }, "FreeplayActorRole");
+        CreateTwoWayRow(menu, ref y, "正規ダミーの役職", RoleCatalog.Get(TempModPlugin.Settings.FreeplayDummyRole.Value).DisplayName, "前へ", "次へ", () =>
+        {
+            TempModPlugin.Settings.AdjustFreeplayDummyRole(-1);
+            ShowFreeplayPractice(menu);
+        }, () =>
+        {
+            TempModPlugin.Settings.AdjustFreeplayDummyRole(+1);
+            ShowFreeplayPractice(menu);
+        }, "FreeplayDummyRole");
+        CreateStaticRow(menu, ref y, "反映方法", "ここで役職を選択して戻り、プラクティスへ入るだけです。正規ダミーを検出すると自動で固定配布します。", "FreeplayApply");
+        CreateStaticRow(menu, ref y, "使い方", "プラクティス内に設定画面はありません。開始時の「自動適用」通知後、ゲーム本体のダミーへ近づいて検証します。", "FreeplayHelp");
+        CreateActionRow(menu, ref y, "役職設定へ戻る", "", "戻る", () => ShowCategoryList(menu), "Back");
     }
 
     internal static void ShowRoleList(GameOptionsMenu menu, string category, int page = 0, RoleId? selectedRole = null)

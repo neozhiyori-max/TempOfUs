@@ -27,7 +27,16 @@ public sealed class RoleEngine
     public IReadOnlyDictionary<byte, PlayerState> Players => _players;
     public IReadOnlyDictionary<byte, BodyState> Bodies => _bodies;
     public IReadOnlyList<Footprint> Footprints => _footprints;
+    /// <summary>HUDの点灯判定と能力実行で共有する、対象指定能力の有効射程。</summary>
+    public float TargetRange => _options.KillDistance;
     public bool IsMeetingActive { get; private set; }
+
+    /// <summary>
+    /// SuperNewRolesのExPlayerControl.IsJackalTeam相当。ジャッカルと、そのジャッカルが作成した
+    /// サイドキックを同一チームとして一貫して判定する。
+    /// </summary>
+    public bool IsJackalTeamMember(byte playerId)
+        => _players.TryGetValue(playerId, out var player) && IsJackalTeamRole(player.PrimaryRole);
 
     /// <summary>
     /// ホストから受信した確定状態を参加者側の表示・入力判定用へ反映する。
@@ -162,10 +171,11 @@ public sealed class RoleEngine
     }
 
     /// <summary>投票で追放された役職の処理。ジェスターは最優先で単独勝利する。</summary>
-    public VictoryResult EndMeeting(byte? exiledPlayerId, float now)
+    public VictoryResult EndMeeting(byte? exiledPlayerId, float now, bool vanillaExileAlreadyApplied = false, bool evaluateVictory = true)
     {
+        // RpcCloseは再送されることがあるため、会議が既に終了している場合は安全に無視する。
         if (!IsMeetingActive)
-            throw new InvalidOperationException("No meeting is active.");
+            return VictoryResult.None;
 
         if (_options.VampireTimerPausesDuringMeeting && _meetingStartedAt >= 0)
         {
@@ -186,18 +196,22 @@ public sealed class RoleEngine
         if (exiledPlayerId is byte playerId)
         {
             var exiled = GetPlayer(playerId);
-            if (exiled.IsAlive)
-                KillPlayer(playerId, null, now, "追放", silent: false, erased: false);
-
+                        if (exiled.IsAlive)
+            {
+                if (vanillaExileAlreadyApplied)
+                    exiled.IsAlive = false;
+                else
+                    KillPlayer(playerId, null, now, "追放", silent: false, erased: false);
+            }
             if (exiled.PrimaryRole == RoleId.Jester)
             {
                 var result = new VictoryResult(VictoryKind.Jester, new[] { playerId });
-                EmitVictory(result, now);
+                if (evaluateVictory)
+                    EmitVictory(result, now);
                 return result;
             }
         }
-
-        return EvaluateVictory(now);
+        return evaluateVictory ? EvaluateVictory(now) : VictoryResult.None;
     }
 
     public int GetVoteWeight(byte playerId)
@@ -457,9 +471,13 @@ public sealed class RoleEngine
             return Reject(actor, AbilityId.RecruitSidekick, now, "勧誘できるクルーに近づいてください。");
         if (RoleCatalog.GetFaction(target.PrimaryRole) != Faction.Crew)
             return Reject(actor, AbilityId.RecruitSidekick, now, "クルーだけをサイドキックにできます。");
+        if (_players.Values.Any(player => player.PrimaryRole == RoleId.Sidekick))
+            return Reject(actor, AbilityId.RecruitSidekick, now, "すでにサイドキックがいるため、追加で勧誘できません。");
         target.PrimaryRole = RoleId.Sidekick;
         target.EffectTargets[AbilityId.RecruitSidekick] = actor.PlayerId;
-        SetCooldown(actor, AbilityId.RecruitSidekick, now, _options.SpecialAbilityCooldown);
+        // SuperNewRolesのJackalAbility/CustomSidekickButtonAbilityと同様に、勧誘はキルとは別の専用クールダウンで管理する。
+        SetCooldown(actor, AbilityId.RecruitSidekick, now, _options.JackalSidekickCooldown);
+        _gateway.Emit(new GameEvent(GameEventKind.RoleChanged, now, actor.PlayerId, target.PlayerId, RoleId.Sidekick.ToString()));
         return Accept(actor, AbilityId.RecruitSidekick, now);
     }
 
@@ -727,6 +745,8 @@ public sealed class RoleEngine
             return Reject(actor, AbilityId.Kill, now, "キルのクールダウン中です。");
         if (!TryGetLivingTarget(actor, targetId, now, out var target))
             return false;
+        if (AreJackalAllies(actor, target))
+            return Reject(actor, AbilityId.Kill, now, "ジャッカル陣営の味方はキルできません。");
 
         if (actor.PrimaryRole == RoleId.Sheriff)
         {
@@ -759,7 +779,7 @@ public sealed class RoleEngine
         var cooldown = actor.PrimaryRole switch
         {
             RoleId.Ninja => _options.NinjaKillCooldown,
-            RoleId.Jackal => _options.JackalKillCooldown,
+            RoleId.Jackal or RoleId.Sidekick => _options.JackalKillCooldown,
             RoleId.Vampire => _options.VampireCooldown,
             _ => _options.StandardKillCooldown,
         };
@@ -1048,6 +1068,7 @@ public sealed class RoleEngine
         target.RoleErasedOnDeath = erased;
         _bodies[targetId] = new BodyState(targetId, target.Position, now, false, erased);
         _gateway.Emit(new GameEvent(GameEventKind.PlayerDied, now, killerId, targetId, detail, target.Position, silent));
+        PromoteSidekickAfterJackalDeath(target, now);
         if (erased)
             _gateway.Emit(new GameEvent(GameEventKind.RoleErased, now, killerId, targetId));
 
@@ -1078,10 +1099,15 @@ public sealed class RoleEngine
             return result;
         }
 
-        var jackalTeam = alive.Where(x => x.PrimaryRole is RoleId.Jackal or RoleId.Sidekick).ToArray();
+        // SuperNewRolesのCheckEndGame.IsKillerWinに合わせ、人数優勢だけでなく他のキラー陣営が残っていないことも確認する。
+        // これにより、ヴァンパイアなど別第三陣営キラーを残したままジャッカルが誤勝利することを防ぐ。
+        var jackalTeam = alive.Where(x => IsJackalTeamRole(x.PrimaryRole)).ToArray();
         var livingImpostors = alive.Where(x => RoleCatalog.GetFaction(x.PrimaryRole) == Faction.Impostor).ToArray();
-        var livingCrew = alive.Where(x => RoleCatalog.GetFaction(x.PrimaryRole) == Faction.Crew).ToArray();
-        if (livingImpostors.Length == 0 && jackalTeam.Length > 0 && livingCrew.Length <= jackalTeam.Length)
+        var totalKillerCount = alive.Count(x => RoleCatalog.GetFaction(x.PrimaryRole) == Faction.Impostor || RoleCatalog.IsKillerNeutral(x.PrimaryRole));
+        var jackalCanWin = jackalTeam.Length > 0
+            && jackalTeam.Length >= alive.Length - jackalTeam.Length
+            && totalKillerCount <= jackalTeam.Length;
+        if (jackalCanWin)
         {
             var result = new VictoryResult(VictoryKind.Jackal, jackalTeam.Select(x => x.PlayerId).ToArray());
             EmitVictory(result, now);
@@ -1144,6 +1170,35 @@ public sealed class RoleEngine
         if (result.Kind != VictoryKind.None)
             _gateway.Emit(new GameEvent(GameEventKind.Victory, now, Detail: result.Kind.ToString(), ParticipantIds: result.WinnerIds));
     }
+
+    /// <summary>
+    /// SuperNewRolesのJackalAbility/JSidekickAbilityが持つ昇格規則を、tempMODのホスト確定状態へ適合する。
+    /// 親ジャッカルが死亡した時だけ、その親が作成した存命サイドキックをジャッカルへ昇格する。
+    /// </summary>
+    private void PromoteSidekickAfterJackalDeath(PlayerState deadPlayer, float now)
+    {
+        if (!_options.JackalSidekickPromotesOnJackalDeath || deadPlayer.PrimaryRole != RoleId.Jackal)
+            return;
+
+        foreach (var sidekick in _players.Values
+                     .Where(player => player.IsAlive
+                         && player.PrimaryRole == RoleId.Sidekick
+                         && player.EffectTargets.TryGetValue(AbilityId.RecruitSidekick, out var ownerId)
+                         && ownerId == deadPlayer.PlayerId)
+                     .ToArray())
+        {
+            sidekick.PrimaryRole = RoleId.Jackal;
+            sidekick.EffectTargets.Remove(AbilityId.RecruitSidekick);
+            sidekick.AbilityCooldowns.Remove(AbilityId.RecruitSidekick);
+            _gateway.Emit(new GameEvent(GameEventKind.RoleChanged, now, deadPlayer.PlayerId, sidekick.PlayerId, "SidekickPromotedToJackal"));
+        }
+    }
+
+    private static bool IsJackalTeamRole(RoleId role)
+        => role is RoleId.Jackal or RoleId.Sidekick;
+
+    private static bool AreJackalAllies(PlayerState first, PlayerState second)
+        => IsJackalTeamRole(first.PrimaryRole) && IsJackalTeamRole(second.PrimaryRole);
 
     private bool TryGetLivingTarget(PlayerState actor, byte? targetId, float now, out PlayerState target, bool needsRange = true)
     {
