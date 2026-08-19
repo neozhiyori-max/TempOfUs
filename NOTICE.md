@@ -12,8 +12,12 @@ The tempMOD implementation has been adapted for the current project structure an
 
 When distributing a compiled `TempMod.dll`, distribute or provide a direct link to the complete corresponding source code for the exact build, together with this notice and the full GPL-3.0 license text. Preserve upstream copyright and license notices for any files copied or modified from SuperNewRoles.
 
-## Other projects
+## Role-by-role credits and migration disclosure
+The repository publishes [`docs/ROLE_MIGRATION_PLAN_JA.md`](./docs/ROLE_MIGRATION_PLAN_JA.md) as the role-by-role credit ledger. For every tempMOD role, the ledger records the reference MOD, corresponding upstream role, repository URL, license status, whether code is copied or only behavior is referenced, and the tempMOD-specific differences.
 
+The current table is explicitly a **migration plan**. A role marked as a direct or near migration candidate is not represented as copied upstream code until a future implementation change identifies the exact source file and preserves its required copyright and license notices. Existing tempMOD code remains tempMOD-specific unless that entry states otherwise.
+
+## Other projects
 Nebula on the Ship has informed the UI architecture exploration, but no Nebula source code or assets are included in this project unless its reuse terms are separately verified and documented.
 
 ## Game notice
