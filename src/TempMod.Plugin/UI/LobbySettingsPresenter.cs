@@ -54,19 +54,17 @@ internal static class LobbySettingsPresenter
         CreateActionRow(menu, ref y, "<color=#D890FF>◆ 第三陣営役職の詳細</color>", "神・ジェスター・ゾンビなど20役職", "開く", () => ShowRoleList(menu, "第三陣営"), "OpenNeutral");
         CreateStaticRow(menu, ref y, "出現率", "10%刻みで変更できます", "ChanceHelp");
         CreateStaticRow(menu, ref y, "少人数開始", "1人から開始可能。ラバーズは2人以上で有効です。", "PlayerCountHelp");
-#if TEMPMOD_ADMIN
-        CreateHeader(menu, ref y, "<color=#FFCF5A>管理者検証</color>", "公開版には含まれないローカルテスト機能です");
-        CreateTwoWayRow(menu, ref y, "ゲームを終了しない", TempModPlugin.AdminSettings.PreventGameEnd.Value ? "<color=#78FF91>ON</color>" : "<color=#FF7777>OFF</color>", "OFF", "ON", () =>
+        CreateHeader(menu, ref y, "<color=#FFCF5A>ゲーム制御</color>", "ホストのみ変更できます。通常のマルチプレイではOFFを推奨します");
+        CreateTwoWayRow(menu, ref y, "ゲームを終了しない", TempModPlugin.MatchSettings.PreventGameEnd.Value ? "<color=#78FF91>ON</color>" : "<color=#FF7777>OFF</color>", "OFF", "ON", () =>
         {
-            TempModPlugin.AdminSettings.SetPreventGameEnd(false);
+            TempModPlugin.MatchSettings.SetPreventGameEnd(false);
             ShowCategoryList(menu);
         }, () =>
         {
-            TempModPlugin.AdminSettings.SetPreventGameEnd(true);
+            TempModPlugin.MatchSettings.SetPreventGameEnd(true);
             ShowCategoryList(menu);
-        }, "AdminNoEnd");
-        CreateStaticRow(menu, ref y, "廃村", "ホスト: Shift + L + Enter", "AdminAbandon");
-#endif
+        }, "PreventGameEnd");
+        CreateStaticRow(menu, ref y, "廃村", "ホスト: Shift + L + Enter", "Abandon");
     }
 
     internal static void ShowRoleList(GameOptionsMenu menu, string category, int page = 0, RoleId? selectedRole = null)

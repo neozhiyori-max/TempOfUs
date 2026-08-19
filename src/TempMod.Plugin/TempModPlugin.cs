@@ -11,30 +11,26 @@ using TMPro;
 
 namespace TempMod.Plugin;
 
-[BepInPlugin(PluginGuid, PluginName, "0.2.1")]
+[BepInPlugin(PluginGuid, PluginName, "0.2.2")]
 public sealed class TempModPlugin : BasePlugin
 {
     public const string PluginGuid = "jp.tempmod.amongus";
     public const string PluginName = "tempMOD";
-    internal const string PluginVersion = "0.2.1";
+    internal const string PluginVersion = "0.2.2";
 
     internal static TempModPlugin Instance { get; private set; } = null!;
     internal static TempModRuntime Runtime { get; private set; } = null!;
     internal static TempModSettings Settings { get; private set; } = null!;
-#if TEMPMOD_ADMIN
-    internal static AdminTestSettings AdminSettings { get; private set; } = null!;
-    internal static AdminTestRuntime AdminRuntime { get; private set; } = null!;
-#endif
+    internal static MatchControlSettings MatchSettings { get; private set; } = null!;
+    internal static MatchControlRuntime MatchRuntime { get; private set; } = null!;
 
     public override void Load()
     {
         Instance = this;
         Settings = new TempModSettings(Config);
         Runtime = new TempModRuntime(Log, Settings);
-#if TEMPMOD_ADMIN
-        AdminSettings = new AdminTestSettings(Config);
-        AdminRuntime = new AdminTestRuntime(Log, AdminSettings);
-#endif
+        MatchSettings = new MatchControlSettings(Config);
+        MatchRuntime = new MatchControlRuntime(Log);
         ClassInjector.RegisterTypeInIl2Cpp<IntroRoleDisplayGuard>();
         ClassInjector.RegisterTypeInIl2Cpp<RoleHoverHint>();
         var harmony = new Harmony(PluginGuid);
@@ -245,24 +241,22 @@ internal static class PlayerControlFixedUpdatePatch
     private static void Postfix(PlayerControl __instance)
     {
         TempModPlugin.Runtime.OnPlayerTick(__instance);
-#if TEMPMOD_ADMIN
         if (PlayerControl.LocalPlayer != null && __instance.PlayerId == PlayerControl.LocalPlayer.PlayerId)
-            TempModPlugin.AdminRuntime.CheckAbandonHotkey();
-#endif
+            TempModPlugin.MatchRuntime.CheckAbandonHotkey();
     }
 }
 
-#if TEMPMOD_ADMIN
 [HarmonyPatch(typeof(LogicGameFlowNormal), nameof(LogicGameFlowNormal.CheckEndCriteria))]
-internal static class AdminPreventGameEndPatch
+internal static class PreventGameEndPatch
 {
     private static bool Prefix()
     {
-        // 検証中のキル・勝利条件が直ちにゲーム終了へ繋がらないようにする。
-        return !TempModPlugin.AdminSettings.PreventGameEnd.Value;
+        // 終了判定を抑止できるのはホストだけ。参加者のローカル設定は試合進行へ影響させない。
+        if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost)
+            return true;
+        return !TempModPlugin.MatchSettings.PreventGameEnd.Value;
     }
 }
-#endif
 
 [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.Start))]
 internal static class EndGameManagerStartPatch
