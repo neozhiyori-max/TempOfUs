@@ -28,6 +28,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
     private bool _assignmentReceived;
     private bool _introRoleLogged;
     private readonly HashSet<byte> _nativeRolesApplied = new();
+    private readonly HashSet<byte> _movementFrozenByTempMod = new();
     private readonly List<ResultLine> _resultLines = new();
     private string? _victoryLabel;
     private bool _resultSentToChat;
@@ -60,6 +61,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
         _introRoleLogged = false;
         _omniscienceShown = false;
         _roleDescriptionChatShown = false;
+        _movementFrozenByTempMod.Clear();
         _log.LogInfo("tempMOD: PlayerControl.OnGameStart を受信しました。開始演出で役職を確定します。");
     }
 
@@ -186,9 +188,16 @@ internal sealed class TempModRuntime : IRoleGameGateway
         {
             var mustFreeze = localState.ImmobilizedUntil > Time.time;
             if (mustFreeze && player.moveable)
+            {
+                // tempMOD自身が停止させたことを記録する。梯子・ベント・会議など本体側の停止状態は変更しない。
                 player.moveable = false;
-            else if (!mustFreeze && !player.moveable && localState.IsAlive)
+                _movementFrozenByTempMod.Add(player.PlayerId);
+            }
+            else if (!mustFreeze && _movementFrozenByTempMod.Remove(player.PlayerId) && localState.IsAlive)
+            {
+                // 自分で停止させたプレイヤーだけを復帰させる。
                 player.moveable = true;
+            }
         }
 
         // 開始演出のコルーチンが標準の役職名を書き戻すため、演出が開いている間は
@@ -592,7 +601,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
             RoleId.Puppeteer => "  [F: 操作支配]",
             RoleId.Undertaker => "  [F: 運搬／配置]",
             RoleId.Cleaner => "  [F: 清掃]",
-            RoleId.MadGuesser => "  [F: 推測]",
+            RoleId.MadGuesser => "  [会議中: 対象横の推測]",
             RoleId.Morphing => "  [F: 遺伝子採取／変身]",
             RoleId.Marionette => "  [F: 糸操作]",
             RoleId.Bomber => "  [F: 爆弾設置]",

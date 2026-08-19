@@ -11,12 +11,12 @@ using TMPro;
 
 namespace TempMod.Plugin;
 
-[BepInPlugin(PluginGuid, PluginName, "0.2.2")]
+[BepInPlugin(PluginGuid, PluginName, "0.2.3")]
 public sealed class TempModPlugin : BasePlugin
 {
     public const string PluginGuid = "jp.tempmod.amongus";
     public const string PluginName = "tempMOD";
-    internal const string PluginVersion = "0.2.2";
+    internal const string PluginVersion = "0.2.3";
 
     internal static TempModPlugin Instance { get; private set; } = null!;
     internal static TempModRuntime Runtime { get; private set; } = null!;

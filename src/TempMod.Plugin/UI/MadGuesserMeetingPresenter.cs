@@ -35,12 +35,16 @@ internal static class MadGuesserMeetingPresenter
         for (var index = 0; index < playerStates.Length; index++)
         {
             var area = playerStates[index];
-            if (area == null || area.AmDead || PlayerControl.LocalPlayer == null || area.TargetPlayerId == PlayerControl.LocalPlayer.PlayerId)
+            if (area == null || PlayerControl.LocalPlayer == null)
+                continue;
+
+            // Steam build 24302054ではTargetPlayerIdがPlayerIdへ置き換えられた。
+            // PlayerIdはbyteとの暗黙変換を持つため、役職エンジン用のIDへ明示的に正規化する。
+            var targetId = (byte)area.PlayerId;
+            if (area.AmDead || targetId == PlayerControl.LocalPlayer.PlayerId)
                 continue;
             if (area.Buttons == null || area.ConfirmButton == null)
                 continue;
-
-            var targetId = area.TargetPlayerId;
             if (area.Buttons.transform.Find(TargetButtonPrefix + targetId) != null)
                 continue;
 

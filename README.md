@@ -1,4 +1,4 @@
-# tempMOD v0.2.2
+# tempMOD v0.2.3
 
 **tempMOD** は、Steam版 Among Us 向けのカスタム役職MODです。**クルー10・インポスター26・第三陣営24、計60種類**の役職、ホスト用役職設定、少人数開始、役職専用HUD、試合リザルト、公開版の自動更新を提供します。タイトル画面には、背景を覆わない透過ロゴ **TempOfUs** を表示します。
 
@@ -11,11 +11,11 @@
 | 項目 | 検証値 |
 | --- | --- |
 | 対象ゲーム | Steam版 Among Us（PC / Windows） |
-| Steam build ID | `23244517` |
+| Steam build ID | `24302054` |
 | 実行形式 | 32ビット（x86）IL2CPP |
 | Unity | `2022.3.44f1` |
 | MOD基盤 | BepInEx 6.0.0-be.785（Unity IL2CPP win-x86） |
-| tempMOD公開版 | `0.2.2` |
+| tempMOD公開版 | `0.2.3` |
 
 BepInExのIL2CPP導入手順では、32ビットWindows実行形式には `Unity.IL2CPP-win-x86` を使用するよう案内されています。[1]
 
@@ -24,7 +24,7 @@ BepInExのIL2CPP導入手順では、32ビットWindows実行形式には `Unity
 1. [最新リリース](../../releases/latest) から **`tempMOD-full.zip`** をダウンロードします。
 2. ZIPをAmong Usのインストールフォルダへ展開します。Steamの標準例は `C:\Program Files (x86)\Steam\steamapps\common\Among Us\` です。
 3. `BepInEx\plugins\TempMod.dll` と `BepInEx\plugins\TempMod.Core.dll` が配置されていることを確認します。
-4. ゲームを起動します。タイトルにTempOfUsロゴが表示され、`BepInEx\LogOutput.log` に `Loading [tempMOD 0.2.2]` があれば読み込み成功です。
+4. ゲームを起動します。タイトルにTempOfUsロゴが表示され、`BepInEx\LogOutput.log` に `Loading [tempMOD 0.2.3]` があれば読み込み成功です。
 
 `tempMOD-full.zip` には、対象環境で動作確認済みの **BepInEx 6 IL2CPP x86ランタイム** を同梱しています。ゲーム本体、個人設定、ログ、ゲームごとに生成されるインターオプ解析物は含めません。BepInExを既に導入済みの場合は、軽量な `tempMOD-public.zip` を展開するだけでも更新できます。
 
@@ -68,6 +68,8 @@ BepInExのIL2CPP導入手順では、32ビットWindows実行形式には `Unity
 ## ゲーム終了抑止と廃村
 
 公開版・管理者検証版の両方で、ホストはロビーの `tempMOD設定` にある **ゲーム制御** から `ゲームを終了しない` をON/OFFできます。ONの間は通常の勝利条件による試合終了を抑止するため、役職能力の検証に使えます。通常のマルチプレイではOFFを推奨します。
+
+v0.2.3はSteam build `24302054`の会議APIへ対応し、マッドゲッサー会議UIの連続例外を修正しています。梯子・ベントなどゲーム本体が移動を制御する場面で、tempMODが移動可能状態を上書きしないようにしました。
 
 ホストは両版共通で **Shift + L + Enter** を押すと、いつでも廃村できます。このホットキーはホストだけに反応し、ロビーや終了画面では何もしません。テストダミー機能は含まれていません。
 
