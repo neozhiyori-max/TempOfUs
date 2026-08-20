@@ -114,7 +114,8 @@ internal sealed class TempModRuntime : IRoleGameGateway
         {
             Faction.Crew => new Color(0.40f, 0.85f, 1.00f),
             Faction.Impostor => new Color(1.00f, 0.36f, 0.36f),
-            _ => new Color(0.85f, 0.55f, 1.00f),
+            // 第三陣営はインポスター赤と区別する水色で統一する。
+            _ => new Color(0.33f, 0.84f, 1.00f),
         };
         var factionName = definition.Faction switch
         {
@@ -373,7 +374,10 @@ internal sealed class TempModRuntime : IRoleGameGateway
             ? $"推測: {RoleCatalog.Get(_meetingGuessRole).DisplayName}"
             : ability == AbilityId.Bribe ? "買収" : "票偽装";
         var remaining = player.AbilityCooldowns.TryGetValue(ability, out var endsAt) ? Math.Max(0f, endsAt - Time.time) : 0f;
-        state = new AbilityButtonState(label, "能力ボタンを押してから投票パネルの対象を選択", remaining <= 0f, remaining, -1, RoleCatalog.Get(player.PrimaryRole).Faction == Faction.Impostor ? new Color(1f, .35f, .35f) : new Color(.82f, .48f, 1f));
+        var factionColor = RoleCatalog.Get(player.PrimaryRole).Faction == Faction.Impostor
+            ? new Color(1f, .35f, .35f)
+            : new Color(.33f, .84f, 1f);
+        state = new AbilityButtonState(label, "能力ボタンを押してから投票パネルの対象を選択", remaining <= 0f, remaining, -1, factionColor);
         return true;
     }
 
@@ -500,14 +504,13 @@ internal sealed class TempModRuntime : IRoleGameGateway
             _ => true,
         };
         var uses = player.PrimaryRole == RoleId.Sheriff ? player.SheriffKillsRemaining : -1;
-        var color = player.PrimaryRole is RoleId.Jackal or RoleId.Sidekick
-            ? Palette.ImpostorRed
-            : RoleCatalog.Get(player.PrimaryRole).Faction switch
-            {
-                Faction.Crew => new Color(0.35f, 0.85f, 1f),
-                Faction.Impostor => new Color(1f, 0.35f, 0.35f),
-                _ => new Color(0.82f, 0.48f, 1f),
-            };
+        var color = RoleCatalog.Get(player.PrimaryRole).Faction switch
+        {
+            Faction.Crew => new Color(0.35f, 0.85f, 1f),
+            Faction.Impostor => new Color(1f, 0.35f, 0.35f),
+            // ジャッカル／サイドキックを含む第三陣営は、インポスター赤ではなく水色で表示する。
+            _ => new Color(0.33f, 0.84f, 1f),
+        };
         state = new AbilityButtonState(label, label, remaining <= 0f && targetAvailable, remaining, uses, color);
         return true;
     }
@@ -913,7 +916,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
     /// <summary>
     /// SuperNewRolesのKnowOtherAbility相当。ローカルプレイヤーがジャッカル陣営の時だけ、
-    /// ジャッカルとサイドキックを相互にインポスター赤で可視化する。
+    /// ジャッカルとサイドキックを相互に第三陣営の水色で可視化する。
     /// </summary>
     private void ApplyJackalTeamNameColors()
     {
@@ -928,7 +931,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
             if (player?.cosmetics?.nameText == null)
                 continue;
             if (_engine.IsJackalTeamMember(player.PlayerId))
-                player.cosmetics.nameText.color = Palette.ImpostorRed;
+                player.cosmetics.nameText.color = new Color(0.33f, 0.84f, 1f);
         }
     }
 

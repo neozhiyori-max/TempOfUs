@@ -9,6 +9,7 @@ var tests = new (string Name, Action Run)[]
     ("ヴァンパイアの噛みつきタイマーは会議中に停止する", VampireBiteTimerPausesDuringMeeting),
     ("ラバーズは後追いする", LoversDieTogether),
     ("市長は二票を持つ", MayorHasDoubleVote),
+    ("SNR版マフィアは他インポスター生存中にキルできず、最後に解放される", MafiaKillUnlocksOnlyAfterOtherImpostorsAreGone),
     ("シェリフのキル回数上限を守る", SheriffKillLimit),
     ("シェリフは設定で第三陣営をキルできない", SheriffCannotKillNeutralWhenDisabled),
     ("1人でも役職抽選できる", SinglePlayerAssignment),
@@ -158,6 +159,22 @@ static void MayorHasDoubleVote()
     engine.AssignRole(1, RoleId.Mayor);
     Assert(engine.GetVoteWeight(1) == 2);
     Assert(engine.GetVoteWeight(2) == 1);
+}
+
+static void MafiaKillUnlocksOnlyAfterOtherImpostorsAreGone()
+{
+    var (engine, _) = CreateEngine();
+    engine.AssignRole(1, RoleId.Mafia);
+    engine.AssignRole(2, RoleId.Impostor);
+    engine.AssignRole(3, RoleId.Crewmate);
+
+    Assert(!engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Kill, 3, null, 2), 2));
+    Assert(engine.Players[3].IsAlive);
+
+    // 上流のMafia.IsKillFlagと同じく、他の生存インポスターがいなくなった時点で解放される。
+    engine.Players[2].IsAlive = false;
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Kill, 3, null, 3), 3));
+    Assert(!engine.Players[3].IsAlive);
 }
 
 static void SheriffKillLimit()

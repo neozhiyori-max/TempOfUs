@@ -34,7 +34,7 @@ tempMODは、独自の仕組みを増やすのではなく、**公開済みで�
 | クルー | 市長 | 直接移植候補 | TOU/SNR `Mayor.cs` | 会議票数を会議専用の集計処理へ集約する。 |
 | インポスター | ニンジャ | 近縁移植候補 | TOR `NinjaTrace.cs` | 無音キル・可視性をキルイベントの表示フラグへ集約する。 |
 | インポスター | ウォーロック | 直接移植候補 | TOU `Warlock.cs` | 呪い対象、すれ違い判定、会議中タイマー停止を移行する。 |
-| インポスター | マフィア | 直接移植候補 | SNR `Mafia.cs` | 直接キル禁止とサボタージュ専用化を分離する。 |
+| インポスター | マフィア | 第1段階移植・回帰確認済み | SNR `Mafia.cs` | SNRの`Mafia.IsKillFlag`へ適合。他の生存インポスターが残る間はキルを拒否し、全員マフィアまたは他インポスター死亡後に通常キルを解放する。 |
 | インポスター | パペッティア | 近縁移植候補 | SNR操作系Ability | 操作固定・解除・会議リセットを共通拘束状態へ移す。 |
 | インポスター | イレイザー | 近縁移植候補 | TOR Eraser系 | キルと役職隠蔽を独立した死亡属性として同期する。 |
 | インポスター | アンダーテイカー | 直接移植候補 | TOU `Undertaker.cs` | 担ぎ上げ・配置・速度低下・会議解除を移行する。 |
@@ -83,7 +83,8 @@ tempMODは、独自の仕組みを増やすのではなく、**公開済みで�
 
 | tempMOD対象 | 実装状態 | 上流MOD・固定コミット | 参照／適合元ファイル | tempMOD側の適合差分 |
 |---|---|---|---|---|
-| ジャッカル／サイドキック | 第1段階の完全移植 | SuperNewRoles `713c98779e14000479f7578a28705264645f07e5`（GPL-3.0） | `Roles/Ability/JackalAbility.cs`、`Roles/Ability/CustomSidekickButtonAbility.cs`、`Roles/Ability/JSidekickAbility.cs`、`Modules/ExPlayerControl.cs`、`Modules/CheckEndGame.cs` | SNRのAbility基盤をtempMODのホスト権限`RoleEngine`へ適合。勧誘対象・専用クールダウン・1人上限・チーム可視性・相互キル禁止・親死亡時昇格・他キラー陣営を除外する勝利条件を移行した。`PlayerControl`の追加／複製やSpawn RPCは使用しない。 |
+| ジャッカル／サイドキック | 第1段階の完全移植 | SuperNewRoles `713c98779e14000479f7578a28705264645f07e5`（GPL-3.0） | `Roles/Ability/JackalAbility.cs`、`Roles/Ability/CustomSidekickButtonAbility.cs`、`Roles/Ability/JSidekickAbility.cs`、`Modules/ExPlayerControl.cs`、`Modules/CheckEndGame.cs` | SNRのAbility基盤をtempMODのホスト権限`RoleEngine`へ適合。勧誘対象・専用クールダウン・1人上限・チーム可視性・相互キル禁止・親死亡時昇格・他キラー陣営を除外する勝利条件を移行した。チーム内の名前色は第三陣営の水色で表示する。`PlayerControl`の追加／複製やSpawn RPCは使用しない。 |
+| マフィア | 第1段階移植・回帰確認済み | SuperNewRoles `713c98779e14000479f7578a28705264645f07e5`（GPL-3.0） | `Roles/Impostor/Mafia.cs` | SNRの`Mafia.IsKillFlag`と同じく、他の生存インポスターがいる間はキルを拒否し、最後に残った時点で通常キルを解放する。専用の連続サボタージュは使用しない。 |
 | アンダーテイカー | 第1段階移植・実機検証待ち | TownOfUs-Reworked `943c46200cd12b2772cfa883a1c1a37cf9c3bb35`（GPL-3.0） | `source/Patches/Roles/Undertaker.cs`、`source/Patches/ImpostorRoles/UndertakerMod/DragBody.cs`、`PerformKillButton.cs`、`KillButtonTarget.cs`、`PlayerControlUpdate.cs`、`UpdateSpeed.cs` | 死体の射程内選択、牽引中の追従・緑アウトライン・減速、配置、死亡／会議／ベント時の安全な自動配置をtempMODの`BodyState`とホスト同期へ適合した。実機で牽引表示・ベント・梯子の最終確認を待つ。 |
 | クリーナー | 第1段階移植・実機検証待ち | TownOfUs-Reworked `943c46200cd12b2772cfa883a1c1a37cf9c3bb35`（GPL-3.0） | `source/Patches/Roles/Janitor.cs`、`source/Patches/ImpostorRoles/JanitorMod/PerformKillButton.cs`、`KillButtonTarget.cs`、`PlayerControlUpdate.cs`、`Coroutine.cs` | 射程内死体だけを対象化し、清掃硬直中に移動を止め、清掃進捗をホスト確定で同期する。既存`DeadBody`は清掃中にフェードし、完了時に通報不能として無効化する。実機でフェード・硬直解除の最終確認を待つ。 |
 | マッドゲッサー | 第1段階移植・実機検証待ち | SuperNewRoles `713c98779e14000479f7578a28705264645f07e5`（GPL-3.0） | `Roles/Impostor/EvilGuesser.cs`、`Roles/Ability/GuesserAbility.cs`、`Events/GuesserShotEvent.cs`、`Roles/Ability/GuesserTrophies.cs` | 会議限定の対象選択、役職一覧、正誤による対象キル／自爆、会議ごとの残弾・上限・次会議での回復を`MeetingHud`互換UIとホスト同期へ適合した。推測ボタンは残り回数を表示する。ページング演出は後続段階で上流UIへ寄せる。 |

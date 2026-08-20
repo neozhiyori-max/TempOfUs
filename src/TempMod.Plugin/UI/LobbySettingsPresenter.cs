@@ -327,7 +327,7 @@ internal static class LobbySettingsPresenter
     {
         "クルー" => "#55D7FF",
         "インポスター" => "#FF6666",
-        _ => "#D890FF",
+        _ => "#55D7FF",
     };
 
     private static string GetShortDescription(RoleId role) => RoleDescriptionCatalog.Get(role);
@@ -346,7 +346,7 @@ internal static class LobbySettingsPresenter
         RoleId.Mayor => "会議で2票",
         RoleId.Ninja => "サイレントキル",
         RoleId.Warlock => "呪いによるキル",
-        RoleId.Mafia => "連続サボタージュ",
+        RoleId.Mafia => "最後にキル解放",
         RoleId.Puppeteer => "他者を操作",
         RoleId.Eraser => "役職を秘匿",
         RoleId.Undertaker => "死体を運搬",

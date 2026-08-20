@@ -760,8 +760,14 @@ public sealed class RoleEngine
 
     private bool TryDirectKill(PlayerState actor, byte? targetId, float now, bool erased)
     {
-        if (actor.PrimaryRole == RoleId.Mafia)
-            return Reject(actor, AbilityId.Kill, now, "マフィアは直接キルできません。");
+        // SuperNewRolesのMafia.IsKillFlagと同じく、生存中の他インポスターがいる間はマフィアはキルできない。
+        // 他の生存インポスターが全員マフィアになった後だけ、通常キルを解放する。
+        if (actor.PrimaryRole == RoleId.Mafia && _players.Values.Any(player =>
+                player.IsAlive &&
+                player.PlayerId != actor.PlayerId &&
+                RoleCatalog.GetFaction(player.PrimaryRole) == Faction.Impostor &&
+                player.PrimaryRole != RoleId.Mafia))
+            return Reject(actor, AbilityId.Kill, now, "他のインポスターが生存している間、マフィアはキルできません。");
         if (!RoleCatalog.Get(actor.PrimaryRole).CanDirectKill)
             return Reject(actor, AbilityId.Kill, now, "この役職はキル能力を持ちません。");
         if (!CanUse(actor, AbilityId.Kill, now))
@@ -919,8 +925,8 @@ public sealed class RoleEngine
     {
         if (actor.PrimaryRole != RoleId.Mafia)
             return Reject(actor, AbilityId.Sabotage, now, "マフィア専用能力です。");
-        _gateway.Emit(new GameEvent(GameEventKind.AbilityAccepted, now, actor.PlayerId, Detail: "ノーコストサボタージュ"));
-        return true;
+        // SNRのマフィアは専用の連続サボタージュ能力を持たず、キル解放条件で個性を表す。
+        return Reject(actor, AbilityId.Sabotage, now, "SNR移植版マフィアは専用サボタージュを使用しません。");
     }
 
     private bool TryPuppet(PlayerState actor, byte? targetId, float now)

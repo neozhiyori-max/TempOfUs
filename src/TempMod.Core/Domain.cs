@@ -377,7 +377,7 @@ public static class RoleCatalog
             [RoleId.Mayor] = new(RoleId.Mayor, "市長", Faction.Crew, false),
             [RoleId.Ninja] = new(RoleId.Ninja, "ニンジャ", Faction.Impostor, true),
             [RoleId.Warlock] = new(RoleId.Warlock, "ウォーロック", Faction.Impostor, true),
-            [RoleId.Mafia] = new(RoleId.Mafia, "マフィア", Faction.Impostor, false),
+            [RoleId.Mafia] = new(RoleId.Mafia, "マフィア", Faction.Impostor, true),
             [RoleId.Puppeteer] = new(RoleId.Puppeteer, "パペッティア", Faction.Impostor, true),
             [RoleId.Eraser] = new(RoleId.Eraser, "イレイザー", Faction.Impostor, true),
             [RoleId.Undertaker] = new(RoleId.Undertaker, "アンダーテイカー", Faction.Impostor, true),
