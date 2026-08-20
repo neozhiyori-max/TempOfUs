@@ -3,6 +3,7 @@
 **/obj/
 dist/
 artifacts/
+runtime_logs/
 .cache/
 
 # Local game references and reverse-engineering working files
