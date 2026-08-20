@@ -47,7 +47,7 @@ internal static class TempModSettingsPanelPresenter
         if (button == null)
             return;
         button.OnClick = new Button.ButtonClickedEvent();
-        button.OnClick.AddListener((UnityAction)(() => OpenCategoryList(menu)));
+        button.OnClick.AddListener((UnityAction)(() => OpenFoundationPage(menu)));
         SetAllText(buttonObject, "tempMOD設定");
     }
 
@@ -58,7 +58,7 @@ internal static class TempModSettingsPanelPresenter
             SetAllText(buttonTransform.gameObject, "tempMOD設定");
     }
 
-    private static void OpenCategoryList(GameSettingMenu menu)
+    private static void OpenFoundationPage(GameSettingMenu menu)
     {
         if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost)
             return;
@@ -68,7 +68,7 @@ internal static class TempModSettingsPanelPresenter
         menu.PresetsTab.gameObject.SetActive(false);
         menu.RoleSettingsTab.gameObject.SetActive(false);
         menu.GameSettingsTab.gameObject.SetActive(true);
-        LobbySettingsPresenter.ShowCategoryList(menu.GameSettingsTab);
+        LobbySettingsPresenter.ShowFoundationPage(menu.GameSettingsTab);
     }
 
     private static void SetAllText(GameObject gameObject, string text)
