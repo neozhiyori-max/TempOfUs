@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>TempMod.ToURBase</AssemblyName>
+    <Version>0.5.0-dev</Version>
+    <Description>tempMOD current-game port worktree based on TownOfUs-Reworked source</Description>
+    <LangVersion>latest</LangVersion>
+    <DebugType>portable</DebugType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <RestoreSources>https://nuget.bepinex.dev/v3/index.json;https://api.nuget.org/v3/index.json;https://nuget.reactor.gg/v3/index.json;https://nuget.samboy.dev/v3/index.json</RestoreSources>
+    <AmongUsReferenceRoot>$(MSBuildProjectDirectory)/../../game_refs/AU</AmongUsReferenceRoot>
+  </PropertyGroup>
+
+  <!-- Current Steam build 24302054 generated bindings.  Do not compile
+       against the old 2025.3.25 AmongUs.GameLibs package. -->
+  <ItemGroup>
+    <CurrentGameCore Include="$(AmongUsReferenceRoot)/BepInEx/core/*.dll" />
+    <CurrentGameInterop Include="$(AmongUsReferenceRoot)/BepInEx/interop/*.dll" />
+    <Reference Include="@(CurrentGameCore)" />
+    <Reference Include="@(CurrentGameInterop)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Reactor" Version="2.4.0-ci.344" />
+    <PackageReference Include="System.Text.Json" Version="6.0.10" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Only tempMOD-owned branding is embedded.  Upstream TOU-R artwork is not shipped. -->
+    <EmbeddedResource Include="Resources/tempofus_logo.png" LogicalName="TempOfUs.Resources.tempofus_logo.png" />
+  </ItemGroup>
+
+  <Target Name="RejectLegacyGameLibs" BeforeTargets="CoreCompile">
+    <Error Condition="!Exists('$(AmongUsReferenceRoot)/BepInEx/interop/Assembly-CSharp.dll')"
+           Text="Current Among Us IL2CPP references are missing. Build cannot proceed safely." />
+  </Target>
+</Project>
