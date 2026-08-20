@@ -53,6 +53,7 @@ internal static class TempModRoleSettingsPresenter
         private static void Postfix(GameSettingMenu __instance)
         {
             RemoveTabs(__instance);
+            RestoreStandardNavigation(__instance);
             if (CustomOptionSaver.IsLoaded)
                 CustomOptionSaver.Save();
         }
@@ -93,7 +94,9 @@ internal static class TempModRoleSettingsPresenter
             menu.RoleSettingsTab.gameObject.SetActive(false);
 
         menu.GameSettingsTab.gameObject.SetActive(true);
+        // 複製元の標準ボタンが有効なうちに文字タブを生成し、その後で左ナビゲーションを隠す。
         CreateCategoryTabs(menu, category);
+        HideStandardNavigation(menu);
         ShowCategory(menu.GameSettingsTab, category);
     }
 
@@ -119,8 +122,9 @@ internal static class TempModRoleSettingsPresenter
             var data = labels[index];
             var tabObject = UnityEngine.Object.Instantiate(menu.GameSettingsButton.gameObject, parent);
             tabObject.name = TabPrefix + data.Item1;
-            tabObject.transform.localScale = Vector3.one * 0.72f;
-            tabObject.transform.localPosition = new Vector3(-2.4f + 1.6f * index, 2.15f, -2f);
+            tabObject.transform.localScale = Vector3.one * 0.66f;
+            // GameSettingsTabの前面レイヤーへ固定し、スクロール領域より上に配置する。
+            tabObject.transform.localPosition = new Vector3(-2.35f + 1.57f * index, 1.78f, -0.75f);
             tabObject.SetActive(true);
             SetAllText(tabObject, data.Item1 == selected
                 ? $"<color={data.Item3}>【{data.Item2}】</color>"
@@ -143,7 +147,8 @@ internal static class TempModRoleSettingsPresenter
             menu.settingsContainer.GetChild(index).gameObject.SetActive(false);
         RemoveExistingRows(menu.settingsContainer);
 
-        var y = 1.35f;
+        // 上部のカテゴリタブに重ならず、見切れない開始位置にする。
+        var y = 0.90f;
         var title = category switch
         {
             Category.General => "<color=#FFD166>tempMOD 基本設定</color>",
@@ -320,6 +325,52 @@ internal static class TempModRoleSettingsPresenter
             if (child != null && child.name.StartsWith(RowPrefix, StringComparison.Ordinal))
                 UnityEngine.Object.Destroy(child.gameObject);
         }
+    }
+
+    private static void HideStandardNavigation(GameSettingMenu menu)
+    {
+        // GameSettingMenuが公開している標準ボタンを確実に隠す。
+        SetActive(menu.GameSettingsButton, false);
+        SetActive(menu.RoleSettingsButton, false);
+
+        // バージョン差のあるプリセットボタンとtempMOD入口は名前探索で隠す。
+        foreach (var name in new[] { EntryButtonName, "PresetsButton", "GamePresetsButton", "PresetButton", "GameSettingsButton", "RoleSettingsButton" })
+        {
+            var target = FindDeep(menu.transform, name);
+            if (target != null)
+                target.gameObject.SetActive(false);
+        }
+    }
+
+    private static void RestoreStandardNavigation(GameSettingMenu menu)
+    {
+        SetActive(menu.GameSettingsButton, true);
+        SetActive(menu.RoleSettingsButton, true);
+        foreach (var name in new[] { EntryButtonName, "PresetsButton", "GamePresetsButton", "PresetButton" })
+        {
+            var target = FindDeep(menu.transform, name);
+            if (target != null)
+                target.gameObject.SetActive(true);
+        }
+    }
+
+    private static void SetActive(Component? component, bool active)
+    {
+        if (component != null)
+            component.gameObject.SetActive(active);
+    }
+
+    private static Transform? FindDeep(Transform root, string name)
+    {
+        if (root.name == name)
+            return root;
+        for (var index = 0; index < root.childCount; index++)
+        {
+            var found = FindDeep(root.GetChild(index), name);
+            if (found != null)
+                return found;
+        }
+        return null;
     }
 
     private static void RemoveTabs(GameSettingMenu menu)

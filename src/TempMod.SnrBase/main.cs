@@ -109,6 +109,7 @@ public partial class SuperNewRolesPlugin : BasePlugin
         // SNRの設定プリファブ・アイコン・画像バンドルは使用しない。
         // tempMOD独自の設定画面パッチだけを適用する。
         // 役職抽選、会議、能力、カスタムRPC、サーバ・外部通信関連のパッチは適用しない。
+        Harmony.CreateClassProcessor(typeof(TitleLogoPresenter.MainMenuManagerStartPatch)).Patch();
         Harmony.CreateClassProcessor(typeof(TempModRoleSettingsPresenter.GameSettingMenuStartPatch)).Patch();
         Harmony.CreateClassProcessor(typeof(TempModRoleSettingsPresenter.GameSettingMenuClosePatch)).Patch();
 
