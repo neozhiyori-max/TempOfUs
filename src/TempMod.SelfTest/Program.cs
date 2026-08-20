@@ -36,6 +36,7 @@ var tests = new (string Name, Action Run)[]
     ("全役職に説明が存在する", EveryRoleHasDescription),
     ("ゾンビはクルーを子ゾンビに感染できる", ZombieInfectsCrew),
     ("ハゲタカの死体回収数は時間経過後も残る", VultureCollectionCountPersists),
+    ("SNR版ハゲタカは必要死体数到達で即座に単独勝利する", VultureWinsImmediatelyAtConfiguredBodyCount),
     ("マッドゲッサーは会議中の正解で対象をキルできる", MadGuesserKillsCorrectRole),
     ("マッドゲッサーは設定された会議内残弾まで推測できる", MadGuesserUsesConfiguredShotsPerMeeting),
     ("マッドゲッサーは会議内残弾を超えて推測できない", MadGuesserCannotExceedShotsPerMeeting),
@@ -505,6 +506,30 @@ static void VultureCollectionCountPersists()
     Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.CollectBody, 2, null, 3), 3));
     engine.Tick(30);
     Assert(engine.Players[1].EffectCounts.TryGetValue(AbilityId.CollectBody, out var collected) && collected == 1);
+}
+
+static void VultureWinsImmediatelyAtConfiguredBodyCount()
+{
+    var gateway = new TestGateway();
+    var engine = new RoleEngine(gateway, new RoleOptions
+    {
+        StandardKillCooldown = 0,
+        VultureCooldown = 12f,
+        VultureRequiredBodies = 1,
+        KillDistance = 3f,
+    });
+    for (byte playerId = 1; playerId <= 3; playerId++)
+    {
+        engine.RegisterPlayer(playerId, $"P{playerId}");
+        engine.UpdatePosition(playerId, new Position(playerId, 0), 1);
+    }
+    engine.AssignRole(1, RoleId.Vulture);
+    engine.AssignRole(2, RoleId.Crewmate);
+    engine.AssignRole(3, RoleId.Impostor);
+    Assert(engine.TryHandleAbility(new AbilityRequest(3, AbilityId.Kill, 2, null, 2), 2));
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.CollectBody, 2, null, 3), 3));
+    Assert(gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.Victory && gameEvent.ParticipantIds?.Contains((byte)1) == true));
+    Assert(engine.Players[1].AbilityCooldowns.TryGetValue(AbilityId.CollectBody, out var cooldown) && cooldown == 15f);
 }
 
 static void MadGuesserKillsCorrectRole()

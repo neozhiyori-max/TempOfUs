@@ -39,6 +39,8 @@ internal sealed class TempModSettings
     internal ConfigEntry<float> JackalKillCooldown { get; }
     internal ConfigEntry<float> JackalSidekickCooldown { get; }
     internal ConfigEntry<bool> JackalSidekickPromotesOnDeath { get; }
+    internal ConfigEntry<float> VultureCooldown { get; }
+    internal ConfigEntry<int> VultureRequiredBodies { get; }
     internal ConfigEntry<float> SpecialAbilityCooldown { get; }
     internal ConfigEntry<float> CleanerDuration { get; }
     internal ConfigEntry<float> BombDelay { get; }
@@ -83,6 +85,8 @@ internal sealed class TempModSettings
         JackalKillCooldown = config.Bind("能力: ジャッカル", "キルクールダウン", 30f, "秒単位です。");
         JackalSidekickCooldown = config.Bind("能力: ジャッカル", "サイドキック作成クールダウン", 30f, "秒単位です。ジャッカルのキルとは別に管理します。");
         JackalSidekickPromotesOnDeath = config.Bind("能力: ジャッカル", "親死亡時にサイドキックを昇格", true, "有効時、親ジャッカルが死亡するとそのサイドキックがジャッカルへ昇格します。");
+        VultureCooldown = config.Bind("能力: ハゲタカ", "死体回収クールダウン", 30f, "SNR既定値は30秒です。");
+        VultureRequiredBodies = config.Bind("能力: ハゲタカ", "勝利に必要な死体数", 3, "SNR既定値は3体です。1～10体。");
         SpecialAbilityCooldown = config.Bind("能力: 追加役職共通", "基本クールダウン", 30f, "秒単位です。");
         CleanerDuration = config.Bind("能力: クリーナー", "清掃硬直時間", 3f, "秒単位です。");
         BombDelay = config.Bind("能力: ボマー", "爆発までの時間", 10f, "秒単位です。");
@@ -164,6 +168,11 @@ internal sealed class TempModSettings
             Detail(DetailSettingKey.JackalKillCooldown, "キルクールダウン", Seconds(JackalKillCooldown.Value)),
             Detail(DetailSettingKey.JackalSidekickCooldown, "サイドキック作成クールダウン", Seconds(JackalSidekickCooldown.Value)),
             Detail(DetailSettingKey.JackalSidekickPromotesOnDeath, "親死亡時にサイドキックを昇格", JackalSidekickPromotesOnDeath.Value ? "有効" : "無効", isToggle: true),
+        },
+        RoleId.Vulture => new[]
+        {
+            Detail(DetailSettingKey.VultureCooldown, "死体回収クールダウン", Seconds(VultureCooldown.Value)),
+            Detail(DetailSettingKey.VultureRequiredBodies, "勝利に必要な死体数", $"{VultureRequiredBodies.Value} 体"),
         },
         RoleId.Cleaner => new[] { Detail(DetailSettingKey.CleanerDuration, "清掃硬直時間", Seconds(CleanerDuration.Value)) },
         RoleId.Bomber => new[]
@@ -250,6 +259,8 @@ internal sealed class TempModSettings
             case DetailSettingKey.JackalKillCooldown: JackalKillCooldown.Value = AdjustSeconds(JackalKillCooldown, delta); break;
             case DetailSettingKey.JackalSidekickCooldown: JackalSidekickCooldown.Value = AdjustSeconds(JackalSidekickCooldown, delta); break;
             case DetailSettingKey.JackalSidekickPromotesOnDeath: JackalSidekickPromotesOnDeath.Value = !JackalSidekickPromotesOnDeath.Value; break;
+            case DetailSettingKey.VultureCooldown: VultureCooldown.Value = AdjustSeconds(VultureCooldown, delta); break;
+            case DetailSettingKey.VultureRequiredBodies: VultureRequiredBodies.Value = Math.Clamp(VultureRequiredBodies.Value + delta, 1, 10); break;
             case DetailSettingKey.CleanerDuration: CleanerDuration.Value = AdjustSeconds(CleanerDuration, delta); break;
             case DetailSettingKey.BombDelay: BombDelay.Value = AdjustSeconds(BombDelay, delta); break;
             case DetailSettingKey.BombRadius: BombRadius.Value = Math.Clamp(BombRadius.Value + delta * .5f, .5f, 10f); break;
@@ -332,6 +343,8 @@ internal sealed class TempModSettings
             JackalKillCooldown = Math.Max(0, JackalKillCooldown.Value),
             JackalSidekickCooldown = Math.Max(0, JackalSidekickCooldown.Value),
             JackalSidekickPromotesOnJackalDeath = JackalSidekickPromotesOnDeath.Value,
+            VultureCooldown = Math.Max(0, VultureCooldown.Value),
+            VultureRequiredBodies = Math.Clamp(VultureRequiredBodies.Value, 1, 10),
             SpecialAbilityCooldown = Math.Max(0, SpecialAbilityCooldown.Value),
             CleanerDuration = Math.Max(0.5f, CleanerDuration.Value),
             BombDelay = Math.Max(0.5f, BombDelay.Value),
@@ -390,6 +403,8 @@ internal sealed class TempModSettings
         JackalKillCooldown,
         JackalSidekickCooldown,
         JackalSidekickPromotesOnDeath,
+        VultureCooldown,
+        VultureRequiredBodies,
         CleanerDuration,
         BombDelay,
         BombRadius,

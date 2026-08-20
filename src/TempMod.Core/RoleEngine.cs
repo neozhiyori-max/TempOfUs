@@ -552,9 +552,15 @@ public sealed class RoleEngine
         if (actor.PrimaryRole != RoleId.Vulture || !CanUse(actor, AbilityId.CollectBody, now) || !TryGetBodyTarget(actor, bodyOwnerId, out var body))
             return Reject(actor, AbilityId.CollectBody, now, "回収できる死体に近づいてください。");
         _bodies.Remove(body.OwnerId);
-        actor.EffectCounts[AbilityId.CollectBody] = (actor.EffectCounts.TryGetValue(AbilityId.CollectBody, out var count) ? count : 0) + 1;
-        SetCooldown(actor, AbilityId.CollectBody, now, _options.SpecialAbilityCooldown);
-        return Accept(actor, AbilityId.CollectBody, now);
+        var collected = (actor.EffectCounts.TryGetValue(AbilityId.CollectBody, out var count) ? count : 0) + 1;
+        actor.EffectCounts[AbilityId.CollectBody] = collected;
+        // SNR VultureのEatDeadBodyAbilityと同じく、ハゲタカ専用クールダウンを使用する。
+        SetCooldown(actor, AbilityId.CollectBody, now, _options.VultureCooldown);
+        var accepted = Accept(actor, AbilityId.CollectBody, now);
+        // SNRでは必要数に達した回収そのものが即座に単独勝利を発火する。
+        if (collected >= _options.VultureRequiredBodies)
+            EmitVictory(new VictoryResult(VictoryKind.Vulture, new[] { actor.PlayerId }), now);
+        return accepted;
     }
 
     private bool TryAbsoluteDefense(PlayerState actor, byte? targetId, float now)
@@ -1171,7 +1177,7 @@ public sealed class RoleEngine
             return result;
         }
 
-        var vultures = alive.Where(x => x.PrimaryRole == RoleId.Vulture && x.EffectCounts.TryGetValue(AbilityId.CollectBody, out var collected) && collected >= 3).ToArray();
+        var vultures = alive.Where(x => x.PrimaryRole == RoleId.Vulture && x.EffectCounts.TryGetValue(AbilityId.CollectBody, out var collected) && collected >= _options.VultureRequiredBodies).ToArray();
         if (vultures.Length > 0)
         {
             var result = new VictoryResult(VictoryKind.Vulture, vultures.Select(x => x.PlayerId).ToArray());

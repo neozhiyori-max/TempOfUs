@@ -13,9 +13,22 @@
 | ジャッカル／サイドキック | `Roles/Neutral/Jackal.cs`、`Sidekick.cs`、`Roles/Ability/JackalAbility.cs` | 第1段階移植済み | 勧誘、味方相互キル禁止、親死亡時の昇格、勝利判定、チーム内名前色を実装済み。第三陣営表示は水色に統一する。 |
 | マッドゲッサー | `Roles/Impostor/EvilGuesser.cs`、`Roles/Ability/GuesserAbility.cs` | 第1段階移植済み | 会議内の対象選択、正誤判定、自爆、会議ごとの残弾を実装済み。 |
 | アルソニスト | `Roles/Neutral/Arsonist.cs`、`Roles/Ability/ArsonistAbility.cs` | 第1段階移植済み | 注油、全員への注油確認、点火、単独勝利、会議をまたぐ進捗保持を実装済み。 |
-| ゴッド | `Roles/Neutral/God.cs` | 基本同期済み | 全知表示と生存状態を既存のホスト同期へ適合済み。勝利条件の実機検証は継続する。 |
+| ゴッド | `Roles/Neutral/God.cs` | 第1段階移植済み・実機検証待ち | SNRの`KnowOtherAbility`に合わせ、全知ボタンを廃止。神視点では全プレイヤーの名前下へ役職を常時表示し、神自身の名前・役職表示は金色にする。 |
 | シュレディンガーの猫 | `Roles/Neutral/SchrodingersCat.cs` | 基本同期済み | 陣営同調の状態遷移を既存の役職変更同期へ適合済み。 |
 | ハゲタカ | `Roles/Neutral/Vulture.cs` | 基本同期済み | 死体回収数と単独勝利条件を`BodyState`へ適合済み。 |
+
+## 第三陣営のSNR準拠方針
+
+ユーザー要望により、第三陣営はSNRに対応役職がある場合、**能力、対象判定、会議開始・終了、死亡、勝利条件、既定設定を上流実装に極力合わせる**。tempMOD側で変更するのは表示名、日本語説明、現行Steam版IL2CPPとホスト権限同期への必須適合だけとする。
+
+| tempMOD役職 | SNR主参照元 | 移植優先 | 現在の主な差分 |
+|---|---|---:|---|
+| ハゲタカ | `Neutral/Vulture.cs` | 1 | SNRの回収CD・必要死体数・死体矢印・ベント可否を設定化し、回収時の即時勝利へ寄せる。 |
+| アルソニスト | `Neutral/Arsonist.cs`、`Ability/ArsonistAbility.cs` | 1 | 注油のチャネル時間、点火ボタン出現、注油マーク、既定設定をSNRへ寄せる。 |
+| シュレディンガーの猫 | `Neutral/SchrodingersCat.cs` と能力実装 | 2 | 同調条件・追放時の挙動・設定を上流能力実装まで追跡して移植する。 |
+| ファナティック | `Neutral/JackalFriends.cs` と能力実装 | 2 | 知覚・共同勝利・対象死亡時挙動をSNR側の役職リンクに寄せる。 |
+| バウンティハンター | `Neutral/Hitman.cs` | 2 | 現行のインポスター型とは陣営・勝利条件が異なるため、SNR型へ寄せる前に表示名との整合を取る。 |
+| SNRに直接対応しない第三陣営 | 該当なし | 3 | ユーザー定義の能力を維持し、類似するSNRの状態機械だけを安全に参照する。 |
 
 ## 次の移植優先順位
 

@@ -249,6 +249,10 @@ public sealed class RoleOptions
     public float JackalSidekickCooldown { get; init; } = 30f;
     /// <summary>親ジャッカル死亡時に、存命のサイドキックをジャッカルへ昇格させる。</summary>
     public bool JackalSidekickPromotesOnJackalDeath { get; init; } = true;
+    /// <summary>SNR Vultureの既定回収クールダウン。</summary>
+    public float VultureCooldown { get; init; } = 30f;
+    /// <summary>SNR Vultureの勝利に必要な既定死体回収数。</summary>
+    public int VultureRequiredBodies { get; init; } = 3;
     public float SpecialAbilityCooldown { get; init; } = 30f;
     public float CleanerDuration { get; init; } = 3f;
     public float BombDelay { get; init; } = 10f;
