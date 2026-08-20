@@ -20,6 +20,7 @@ using SuperNewRoles.Modules.Compatibility;
 using SuperNewRoles.Patches;
 using SuperNewRoles.Roles;
 using SuperNewRoles.CustomOptions;
+using SuperNewRoles.UI;
 using UnityEngine.EventSystems;
 using SuperNewRoles.Modules.Events.Bases;
 using SuperNewRoles.HelpMenus;
@@ -105,8 +106,14 @@ public partial class SuperNewRolesPlugin : BasePlugin
         CustomRoleManager.Load();
         CustomOptionManager.Load();
 
+        // SNRの設定プリファブ・アイコン・画像バンドルは使用しない。
+        // tempMOD独自の設定画面パッチだけを適用する。
+        // 役職抽選、会議、能力、カスタムRPC、サーバ・外部通信関連のパッチは適用しない。
+        Harmony.CreateClassProcessor(typeof(TempModRoleSettingsPresenter.GameSettingMenuStartPatch)).Patch();
+        Harmony.CreateClassProcessor(typeof(TempModRoleSettingsPresenter.GameSettingMenuClosePatch)).Patch();
+
         Logger.LogInfo("tempMOD SNR foundation 0.4.0 を読み込みました。");
-        Logger.LogInfo("SNR由来の役職・ローカル設定を5役職だけ登録しました。同期・会議・能力パッチは未有効です。");
+        Logger.LogInfo("SNR由来の5役職とtempMOD独自設定UIを登録しました。同期・会議・能力パッチは未有効です。");
     }
 
     private static void LoadAnnouncementImageDecoder()
