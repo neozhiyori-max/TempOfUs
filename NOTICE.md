@@ -4,24 +4,15 @@
 
 ## SuperNewRoles notice
 
-The start-of-game role-introduction integration in this project is based on the publicly available implementation structure of **SuperNewRoles**. That project is licensed under GPL-3.0. The original project is available at [SuperNewRoles/SuperNewRoles](https://github.com/SuperNewRoles/SuperNewRoles).
+This project contains a derived **minimal SNR foundation** from [SuperNewRoles/SuperNewRoles](https://github.com/SuperNewRoles/SuperNewRoles), fixed at commit `713c98779e14000479f7578a28705264645f07e5`. SuperNewRoles is licensed under GPL-3.0, and the copied source remains available in `src/TempMod.SnrBase/` together with its upstream copyright and license terms.
 
-The tempMOD implementation has been adapted for the current project structure and the user's specified roles. Changes include the custom role domain model, host-authoritative assignment state, Japanese settings interface, faction-level role limits, and tempMOD-specific game integration.
+The derived SNR project is currently compiled as `TempMod.SnrBase.dll` and is intentionally a **no-feature foundation**. Its entry point has been changed to use the tempMOD identifier and has had the following SNR startup calls disabled: role registration, role options, custom RPC registration, Harmony patch-all, external API and analytics initialization, custom servers and region changes, announcements, custom cosmetics, trophies, in-game requests, CPU affinity modification, and SNR update checks. No SNR role is active in this initial foundation.
 
-## SuperNewRoles Jackal and Sidekick role notice
-The Jackal and Sidekick role flow is adapted from the GPL-3.0 SuperNewRoles sources at commit `713c98779e14000479f7578a28705264645f07e5`, specifically `Roles/Ability/JackalAbility.cs`, `Roles/Ability/CustomSidekickButtonAbility.cs`, `Roles/Ability/JSidekickAbility.cs`, `Modules/ExPlayerControl.cs`, and `Modules/CheckEndGame.cs`. tempMOD adapts that role flow to its host-authoritative `RoleEngine` and current Steam IL2CPP integration. The complete role-level source mapping, exact differences, and future migration status are published in [`docs/ROLE_MIGRATION_PLAN_JA.md`](./docs/ROLE_MIGRATION_PLAN_JA.md).
+The fixed source reference, current-game build audit, and adoption architecture are published in [`docs/SNR_BASELINE_ADOPTION_AUDIT_JA.md`](./docs/SNR_BASELINE_ADOPTION_AUDIT_JA.md) and [`docs/SNR_ADOPTION_ARCHITECTURE_JA.md`](./docs/SNR_ADOPTION_ARCHITECTURE_JA.md).
 
 ## Corresponding source
 
-When distributing a compiled `TempMod.dll`, distribute or provide a direct link to the complete corresponding source code for the exact build, together with this notice and the full GPL-3.0 license text. Preserve upstream copyright and license notices for any files copied or modified from SuperNewRoles.
-
-## Role-by-role credits and migration disclosure
-The repository publishes [`docs/ROLE_MIGRATION_PLAN_JA.md`](./docs/ROLE_MIGRATION_PLAN_JA.md) as the role-by-role credit ledger. For every tempMOD role, the ledger records the reference MOD, corresponding upstream role, repository URL, license status, whether code is copied or only behavior is referenced, and the tempMOD-specific differences.
-
-The current table is explicitly a **migration plan**. A role marked as a direct or near migration candidate is not represented as copied upstream code until a future implementation change identifies the exact source file and preserves its required copyright and license notices. Existing tempMOD code remains tempMOD-specific unless that entry states otherwise.
-
-## Other projects
-Nebula on the Ship has informed the UI architecture exploration, but no Nebula source code or assets are included in this project unless its reuse terms are separately verified and documented.
+When distributing a compiled `TempMod.SnrBase.dll`, distribute or provide a direct link to the complete corresponding source code for the exact build, together with this notice and the full GPL-3.0 license text. Preserve upstream copyright and license notices for all files copied or modified from SuperNewRoles.
 
 ## Game notice
 

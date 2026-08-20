@@ -1,0 +1,724 @@
+using AmongUs.Data;
+using HarmonyLib;
+using SuperNewRoles.CustomOptions.Categories;
+using SuperNewRoles.CustomCosmetics.UI;
+using SuperNewRoles.Modules;
+using SuperNewRoles.Roles.Modifiers;
+using TMPro;
+using UnityEngine;
+using static CosmeticsLayer;
+
+namespace SuperNewRoles.CustomCosmetics.CosmeticsPlayer;
+
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetNamePosition))]
+public static class CosmeticsLayer_SetNamePosition
+{
+    public static void Postfix(CosmeticsLayer __instance, Vector3 newPosition)
+    {
+        newPosition.z = -1f;
+        __instance.nameTextContainer.transform.localPosition = newPosition;
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetAsLocalPlayer))]
+public static class PlayerControl_Start
+{
+    public static void Postfix(CosmeticsLayer __instance)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        customCosmeticsLayer?.hat1?.SetLocalPlayer(true);
+        customCosmeticsLayer?.hat2?.SetLocalPlayer(true);
+        customCosmeticsLayer?.visor1?.SetLocalPlayer(true);
+        customCosmeticsLayer?.visor2?.SetLocalPlayer(true);
+
+        // 遅延を削除し、即座に設定
+        PlayerControlRpcExtensions.RpcCustomSetCosmetics(PlayerControl.LocalPlayer.PlayerId, CostumeTabType.Hat2, CustomCosmeticsSaver.CurrentHat2Id, (PlayerControl.LocalPlayer.Data?.DefaultOutfit?.ColorId).GetValueOrDefault());
+        PlayerControlRpcExtensions.RpcCustomSetCosmetics(PlayerControl.LocalPlayer.PlayerId, CostumeTabType.Visor2, CustomCosmeticsSaver.CurrentVisor2Id, (PlayerControl.LocalPlayer.Data?.DefaultOutfit?.ColorId).GetValueOrDefault());
+    }
+}
+[HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnPlayerJoined))]
+public static class AmongUsClient_OnPlayerJoined
+{
+    public static void Postfix(InnerNet.ClientData data)
+    {
+        if (PlayerControl.LocalPlayer != null)
+        {
+            // 遅延を削除し、即座に設定
+            PlayerControlRpcExtensions.RpcCustomSetCosmetics(PlayerControl.LocalPlayer.PlayerId, CostumeTabType.Hat2, CustomCosmeticsSaver.CurrentHat2Id, (PlayerControl.LocalPlayer.Data?.DefaultOutfit?.ColorId).GetValueOrDefault());
+            PlayerControlRpcExtensions.RpcCustomSetCosmetics(PlayerControl.LocalPlayer.PlayerId, CostumeTabType.Visor2, CustomCosmeticsSaver.CurrentVisor2Id, (PlayerControl.LocalPlayer.Data?.DefaultOutfit?.ColorId).GetValueOrDefault());
+        }
+    }
+}
+[HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.CoStartGame))]
+public static class AmongUsClient_CoStartGame
+{
+    public static void Postfix()
+    {
+        var localPlayer = PlayerControl.LocalPlayer;
+        if (localPlayer != null)
+        {
+            int colorId = (localPlayer.Data?.DefaultOutfit?.ColorId).GetValueOrDefault();
+            PlayerControlRpcExtensions.RpcCustomSetCosmetics(localPlayer.PlayerId, CostumeTabType.Hat2, CustomCosmeticsSaver.CurrentHat2Id, colorId);
+            PlayerControlRpcExtensions.RpcCustomSetCosmetics(localPlayer.PlayerId, CostumeTabType.Visor2, CustomCosmeticsSaver.CurrentVisor2Id, colorId);
+        }
+
+        if (ModHelpers.IsHnS())
+        {
+            foreach (PlayerControl player in PlayerControl.AllPlayerControls)
+            {
+                if (player?.Data?.Role == null || !player.Data.Role.IsImpostor) continue;
+                if (player.cosmetics == null) continue;
+
+                CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(player.cosmetics);
+                customCosmeticsLayer?.visor1?.gameObject?.SetActive(false);
+                customCosmeticsLayer?.visor2?.gameObject?.SetActive(false);
+            }
+        }
+    }
+}
+[HarmonyPatch(typeof(VisorLayer), nameof(VisorLayer.SetFlipX))]
+public static class VisorLayer_SetFlipX
+{
+    public static void Postfix(VisorLayer __instance, bool flipX)
+    {
+        var (layer1, layer2) = CustomCosmeticsLayers.GetVisorLayers(__instance);
+        if (layer1 != null)
+        {
+            layer1.SetFlipX(flipX);
+        }
+        if (layer2 != null)
+        {
+            layer2.SetFlipX(flipX);
+        }
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetDeadFlipX))]
+public static class CosmeticsLayer_SetDeadFlipX
+{
+    public static void Postfix(CosmeticsLayer __instance, bool flipped)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        customCosmeticsLayer?.visor1?.SetFlipX(flipped);
+        customCosmeticsLayer?.visor2?.SetFlipX(flipped);
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetBodyAsGhost))]
+public static class CosmeticsLayer_SetBodyAsGhost
+{
+    public static void Postfix(CosmeticsLayer __instance)
+    {
+        CustomCosmeticsAlpha.Set(__instance, 0.5f);
+    }
+}
+[HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.SetHatAndVisorAlpha))]
+public static class PlayerControl_SetHatAndVisorAlpha
+{
+    public static void Postfix(PlayerControl __instance, float a)
+    {
+        if (__instance?.cosmetics == null) return;
+        CustomCosmeticsAlpha.Set(__instance.cosmetics, a);
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetFlipXWithoutPet))]
+public static class CosmeticsLayer_SetFlipXWithoutPet
+{
+    public static void Postfix(CosmeticsLayer __instance, bool flipped)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        customCosmeticsLayer?.visor1?.SetFlipX(flipped);
+        customCosmeticsLayer?.visor2?.SetFlipX(flipped);
+    }
+}
+[HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.ClientInitialize))]
+public static class PlayerControl_ClientInitialize
+{
+    public static void Postfix(PlayerControl __instance)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance.cosmetics);
+
+        // ローカルプレイヤーのみにスキンを設定
+        if (__instance == PlayerControl.LocalPlayer)
+        {
+            // 遅延を削除し、即座に設定
+            PlayerControlRpcExtensions.RpcCustomSetCosmetics(__instance.PlayerId, CostumeTabType.Hat2, CustomCosmeticsSaver.CurrentHat2Id, __instance.CurrentOutfit.ColorId);
+            PlayerControlRpcExtensions.RpcCustomSetCosmetics(__instance.PlayerId, CostumeTabType.Visor2, CustomCosmeticsSaver.CurrentVisor2Id, __instance.CurrentOutfit.ColorId);
+        }
+
+        customCosmeticsLayer?.hat1?.SetLocalPlayer(__instance == PlayerControl.LocalPlayer);
+        customCosmeticsLayer?.hat2?.SetLocalPlayer(__instance == PlayerControl.LocalPlayer);
+        customCosmeticsLayer?.visor1?.SetLocalPlayer(__instance == PlayerControl.LocalPlayer);
+        customCosmeticsLayer?.visor2?.SetLocalPlayer(__instance == PlayerControl.LocalPlayer);
+    }
+}
+
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetHat), [typeof(string), typeof(int)])]
+public static class PoolablePlayer_SetHat_String
+{
+    public static void Postfix(CosmeticsLayer __instance, string hatId, int color)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        customCosmeticsLayer?.hat1?.SetHat(hatId, color);
+        __instance.OnCosmeticSet?.Invoke(hatId, color, CosmeticKind.HAT);
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetHat), [typeof(HatData), typeof(int)])]
+public static class PoolablePlayer_SetHat_HatData
+{
+    public static void Postfix(CosmeticsLayer __instance, HatData hatData, int color)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        customCosmeticsLayer?.hat1?.SetHat(new CosmeticDataWrapperHat(hatData), color);
+        __instance.OnCosmeticSet?.Invoke(hatData.ProdId, color, CosmeticKind.HAT);
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetVisor), [typeof(string), typeof(int)])]
+public static class PoolablePlayer_SetVisor_String
+{
+    public static void Postfix(CosmeticsLayer __instance, string visorId, int color)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        Logger.Info("PoolablePlayer_SetVisor_String.Postfix: " + visorId);
+        customCosmeticsLayer?.visor1?.SetVisor(visorId, color);
+        __instance.OnCosmeticSet?.Invoke(visorId, color, CosmeticKind.VISOR);
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetVisor), [typeof(VisorData), typeof(int)])]
+public static class PoolablePlayer_SetVisor_VisorData
+{
+    public static void Postfix(CosmeticsLayer __instance, VisorData visorData, int color)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        customCosmeticsLayer?.visor1?.SetVisor(new CosmeticDataWrapperVisor(visorData), color);
+        __instance.OnCosmeticSet?.Invoke(visorData.ProdId, color, CosmeticKind.VISOR);
+    }
+}
+[HarmonyPatch(typeof(PoolablePlayer), nameof(PoolablePlayer.UpdateFromDataManager), [typeof(PlayerMaterial.MaskType)])]
+public static class PoolablePlayer_UpdateFromDataManager
+{
+    public static void Postfix(PoolablePlayer __instance)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance.cosmetics);
+        customCosmeticsLayer?.hat2?.SetHat(CustomCosmeticsSaver.CurrentHat2Id, DataManager.Player.Customization.Color);
+        customCosmeticsLayer?.visor2?.SetVisor(CustomCosmeticsSaver.CurrentVisor2Id, DataManager.Player.Customization.Color);
+    }
+}
+[HarmonyPatch(typeof(PoolablePlayer), nameof(PoolablePlayer.UpdateFromDataManager), [typeof(PlayerMaterial.MaskType), typeof(int)])]
+public static class PoolablePlayer_UpdateFromDataManager_With_Int
+{
+    public static void Postfix(PoolablePlayer __instance, int colorId)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance.cosmetics);
+        customCosmeticsLayer?.hat2?.SetHat(CustomCosmeticsSaver.CurrentHat2Id, colorId);
+        customCosmeticsLayer?.visor2?.SetVisor(CustomCosmeticsSaver.CurrentVisor2Id, colorId);
+    }
+}
+[HarmonyPatch(typeof(VitalsPanel), nameof(VitalsPanel.SetPlayer))]
+public static class VitalsPanel_SetPlayer
+{
+    public static void Postfix(VitalsPanel __instance)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance.PlayerIcon.cosmetics);
+        CustomCosmeticsMeetingMask.SetSimpleUiMask(customCosmeticsLayer, force: true);
+    }
+}
+[HarmonyPatch(typeof(PoolablePlayer), nameof(PoolablePlayer.UpdateFromEitherPlayerDataOrCache))]
+public static class PoolablePlayer_UpdateFromEitherPlayerDataOrCache
+{
+    public static void Postfix(PoolablePlayer __instance, NetworkedPlayerInfo pData, PlayerMaterial.MaskType maskType)
+    {
+        if (pData.Object == null) return;
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance.cosmetics);
+        CustomCosmeticsLayer pcLayer = CustomCosmeticsLayers.ExistsOrInitialize(pData.Object.cosmetics);
+        CustomCosmeticsAlpha.Set(customCosmeticsLayer, pData.IsDead ? 0.5f : 1f);
+
+        // Hat2/Visor2の設定時、DefaultHat/DefaultVisorがnullの場合はCustomCosmeticsSaverから取得
+        string hat2Id = pcLayer.hat2.DefaultHat?.ProdId;
+        if (string.IsNullOrEmpty(hat2Id) && pData.Object == PlayerControl.LocalPlayer)
+            hat2Id = CustomCosmeticsSaver.CurrentHat2Id;
+        if (!string.IsNullOrEmpty(hat2Id))
+            customCosmeticsLayer?.hat2?.SetHat(hat2Id, pData.DefaultOutfit.ColorId);
+
+        string visor2Id = pcLayer.visor2.DefaultVisor?.ProdId;
+        if (string.IsNullOrEmpty(visor2Id) && pData.Object == PlayerControl.LocalPlayer)
+            visor2Id = CustomCosmeticsSaver.CurrentVisor2Id;
+        if (!string.IsNullOrEmpty(visor2Id))
+            customCosmeticsLayer?.visor2?.SetVisor(visor2Id, pData.DefaultOutfit.ColorId);
+
+        CustomCosmeticsLayerMask.ApplyMaskType(customCosmeticsLayer, maskType);
+    }
+}
+[HarmonyPatch(typeof(PoolablePlayer), nameof(PoolablePlayer.UpdateFromPlayerData))]
+public static class PoolablePlayer_UpdateFromPlayerData
+{
+    public static void Postfix(PoolablePlayer __instance, NetworkedPlayerInfo pData, PlayerMaterial.MaskType maskType)
+    {
+        if (pData.Object == null) return;
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance.cosmetics);
+        CustomCosmeticsLayer pcLayer = CustomCosmeticsLayers.ExistsOrInitialize(pData.Object.cosmetics);
+        CustomCosmeticsAlpha.Set(customCosmeticsLayer, pData.IsDead ? 0.5f : 1f);
+
+        // Hat2/Visor2の設定時、DefaultHat/DefaultVisorがnullの場合はCustomCosmeticsSaverから取得
+        string hat2Id = pcLayer.hat2.DefaultHat?.ProdId;
+        if (string.IsNullOrEmpty(hat2Id) && pData.Object == PlayerControl.LocalPlayer)
+            hat2Id = CustomCosmeticsSaver.CurrentHat2Id;
+        if (!string.IsNullOrEmpty(hat2Id))
+            customCosmeticsLayer?.hat2?.SetHat(hat2Id, pData.DefaultOutfit.ColorId);
+
+        string visor2Id = pcLayer.visor2.DefaultVisor?.ProdId;
+        if (string.IsNullOrEmpty(visor2Id) && pData.Object == PlayerControl.LocalPlayer)
+            visor2Id = CustomCosmeticsSaver.CurrentVisor2Id;
+        if (!string.IsNullOrEmpty(visor2Id))
+            customCosmeticsLayer?.visor2?.SetVisor(visor2Id, pData.DefaultOutfit.ColorId);
+
+        CustomCosmeticsLayerMask.ApplyMaskType(customCosmeticsLayer, maskType);
+    }
+}
+[HarmonyPatch(typeof(ChatBubble), nameof(ChatBubble.SetCosmetics))]
+public static class ChatBubble_SetCosmetics
+{
+    public static void Postfix(ChatBubble __instance)
+    {
+        Logger.Info("ChatBubble_SetCosmetics");
+        Logger.Info($"ChatBubble_SetCosmetics: {__instance.Player.name}");
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance.Player.cosmetics);
+        CustomCosmeticsMeetingMask.SetSimpleUiMask(customCosmeticsLayer, force: true);
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetMaskType))]
+public static class CosmeticsLayer_SetMaskType
+{
+    public static void Postfix(CosmeticsLayer __instance, PlayerMaterial.MaskType type)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        CustomCosmeticsLayerMask.ApplyMaskType(customCosmeticsLayer, type);
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetMaskLayer))]
+public static class CosmeticsLayer_SetMaskLayer
+{
+    public static void Postfix(CosmeticsLayer __instance, int layer)
+    {
+        if (!CustomCosmeticsLayers.Exists(__instance, out var customCosmeticsLayer)) return;
+
+        CustomCosmeticsLayerMask.ApplyMaskLayer(customCosmeticsLayer, layer);
+    }
+}
+public static class CustomCosmeticsLayerMask
+{
+    public static void ApplyMaskType(CustomCosmeticsLayer customCosmeticsLayer, PlayerMaterial.MaskType type)
+    {
+        if (customCosmeticsLayer == null) return;
+
+        customCosmeticsLayer.hat1?.SetMaskType(type);
+        customCosmeticsLayer.hat2?.SetMaskType(type);
+        customCosmeticsLayer.visor1?.SetMaskType(type);
+        customCosmeticsLayer.visor2?.SetMaskType(type);
+    }
+
+    public static void ApplyMaskLayer(CustomCosmeticsLayer customCosmeticsLayer, int layer)
+    {
+        if (customCosmeticsLayer == null) return;
+
+        customCosmeticsLayer.hat1?.SetMaskLayer(layer);
+        customCosmeticsLayer.hat2?.SetMaskLayer(layer);
+        customCosmeticsLayer.visor1?.SetMaskLayer(layer);
+        customCosmeticsLayer.visor2?.SetMaskLayer(layer);
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.AnimateClimb))]
+public static class CosmeticsLayer_AnimateClimb
+{
+    public static void Postfix(CosmeticsLayer __instance)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        customCosmeticsLayer?.hat1?.SetClimbAnim();
+        customCosmeticsLayer?.hat2?.SetClimbAnim();
+        customCosmeticsLayer?.visor1?.SetClimbAnim(__instance.bodyType);
+        customCosmeticsLayer?.visor2?.SetClimbAnim(__instance.bodyType);
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.Visible), MethodType.Setter)]
+public static class CosmeticsLayer_Visible
+{
+    public static void Postfix(CosmeticsLayer __instance, bool value)
+    {
+        __instance.UpdateVisibility();
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.UpdateVisibility))]
+public static class CosmeticsLayer_UpdateVisibility
+{
+    public static void Postfix(CosmeticsLayer __instance)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        customCosmeticsLayer.hat1.Visible = __instance.visible;
+        customCosmeticsLayer.hat2.Visible = __instance.visible;
+        customCosmeticsLayer.visor1.Visible = __instance.visible;
+        customCosmeticsLayer.visor2.Visible = __instance.visible;
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetBodyCosmeticsVisible))]
+public static class CosmeticsLayer_SetBodyCosmeticsVisible
+{
+    public static void Postfix(CosmeticsLayer __instance, bool b)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        customCosmeticsLayer.hat1.Visible = b;
+        customCosmeticsLayer.hat2.Visible = b;
+        customCosmeticsLayer.visor1.Visible = b;
+        customCosmeticsLayer.visor2.Visible = b;
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetHatVisorVisible))]
+public static class CosmeticsLayer_SetHatVisorVisible
+{
+    public static void Postfix(CosmeticsLayer __instance, bool isVisible)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        customCosmeticsLayer.hat1.Visible = isVisible;
+        customCosmeticsLayer.hat2.Visible = isVisible;
+        customCosmeticsLayer.visor1.Visible = isVisible;
+        customCosmeticsLayer.visor2.Visible = isVisible;
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.ToggleHat))]
+public static class CosmeticsLayer_ToggleHat
+{
+    public static void Postfix(CosmeticsLayer __instance, bool b)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        customCosmeticsLayer.hat1.Visible = b;
+        customCosmeticsLayer.hat2.Visible = b;
+    }
+}
+[HarmonyPatch(typeof(CosmeticsLayer), nameof(CosmeticsLayer.SetHatAndVisorIdle))]
+public static class CosmeticsLayer_SetHatAndVisorIdle
+{
+    public static void Postfix(CosmeticsLayer __instance, int colorId)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance);
+        customCosmeticsLayer?.hat1?.SetIdleAnim(colorId);
+        customCosmeticsLayer?.hat2?.SetIdleAnim(colorId);
+        customCosmeticsLayer?.visor1?.SetIdleAnim(colorId);
+        customCosmeticsLayer?.visor2?.SetIdleAnim(colorId);
+    }
+}
+[HarmonyPatch(typeof(VisorLayer), nameof(VisorLayer.SetVisor), [typeof(string), typeof(int)])]
+public static class VisorLayer_SetVisor
+{
+    public static void Postfix(VisorLayer __instance, string visorId, int colorId)
+    {
+        if (StoreMenu.InstanceExists || !CustomCosmeticsLoader.IsRuntimeEnabled) return;
+        __instance.Image.enabled = false;
+    }
+}
+[HarmonyPatch(typeof(HatParent), nameof(HatParent.LateUpdate))]
+public static class HatParent_LateUpdate
+{
+    public static void Postfix(HatParent __instance)
+    {
+        if (StoreMenu.InstanceExists || !CustomCosmeticsLoader.IsRuntimeEnabled) return;
+        if (__instance.FrontLayer != null)
+            __instance.FrontLayer.enabled = false;
+        if (__instance.BackLayer != null)
+            __instance.BackLayer.enabled = false;
+    }
+}
+[HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.PopulateButtons))]
+public static class MeetingHud_PopulateButtons
+{
+    public static void Postfix(MeetingHud __instance)
+    {
+        Logger.Info("MeetingHud_PopulateButtons.Postfix");
+        CustomCosmeticsMeetingMask.ClearAppliedLayers();
+
+        foreach (var playerState in __instance.playerStates)
+        {
+            if (playerState?.PlayerIcon?.cosmetics == null) continue;
+
+            ExPlayerControl player = ExPlayerControl.ById(playerState.PlayerId);
+            if (player?.Player == null || player.Data == null || player.cosmetics == null) continue;
+
+            CustomCosmeticsLayer iconLayer = CustomCosmeticsLayers.ExistsOrInitialize(playerState.PlayerIcon.cosmetics);
+            CustomCosmeticsLayer playerLayer = CustomCosmeticsLayers.ExistsOrInitialize(player.cosmetics);
+            if (iconLayer == null || playerLayer == null) continue;
+
+            Logger.Info($"{player.Data.PlayerId} : {playerLayer.hat2?.DefaultHat?.ProdId} {playerLayer.visor2?.DefaultVisor?.ProdId}");
+
+            // Hat2/Visor2の設定時、DefaultHat/DefaultVisorがnullの場合はCustomCosmeticsSaverから取得
+            string hat2Id = playerLayer.hat2?.DefaultHat?.ProdId;
+            if (string.IsNullOrEmpty(hat2Id) && player == PlayerControl.LocalPlayer)
+                hat2Id = CustomCosmeticsSaver.CurrentHat2Id;
+            if (!string.IsNullOrEmpty(hat2Id))
+                iconLayer.hat2?.SetHat(hat2Id, player.Data.DefaultOutfit.ColorId);
+
+            string visor2Id = playerLayer.visor2?.DefaultVisor?.ProdId;
+            if (string.IsNullOrEmpty(visor2Id) && player == PlayerControl.LocalPlayer)
+                visor2Id = CustomCosmeticsSaver.CurrentVisor2Id;
+            if (!string.IsNullOrEmpty(visor2Id))
+                iconLayer.visor2?.SetVisor(visor2Id, player.Data.DefaultOutfit.ColorId);
+
+            // Hat2/Visor2の表示を確実に有効化
+            if (iconLayer.hat2 != null)
+            {
+                iconLayer.hat2.Visible = true;
+                iconLayer.hat2.gameObject.SetActive(true);
+            }
+            if (iconLayer.visor2 != null)
+            {
+                iconLayer.visor2.Visible = true;
+                iconLayer.visor2.gameObject.SetActive(true);
+            }
+
+            CustomCosmeticsMeetingMask.SetSimpleUiMask(iconLayer);
+        }
+    }
+}
+[HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Update))]
+public static class MeetingHud_Update
+{
+    public static void Postfix(MeetingHud __instance)
+    {
+        foreach (var playerState in __instance.playerStates)
+        {
+            if (playerState?.PlayerIcon?.cosmetics == null) continue;
+
+            CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(playerState.PlayerIcon.cosmetics);
+            CustomCosmeticsMeetingMask.SetSimpleUiMask(customCosmeticsLayer);
+        }
+    }
+}
+public static class CustomCosmeticsMeetingMask
+{
+    private static readonly System.Collections.Generic.HashSet<int> AppliedLayers = new();
+
+    public static void ClearAppliedLayers()
+    {
+        AppliedLayers.Clear();
+    }
+
+    public static void SetSimpleUiMask(CustomCosmeticsLayer customCosmeticsLayer, bool force = false)
+    {
+        if (customCosmeticsLayer == null) return;
+
+        int layerId = customCosmeticsLayer.cosmeticsLayer != null
+            ? customCosmeticsLayer.cosmeticsLayer.GetInstanceID()
+            : customCosmeticsLayer.GetHashCode();
+        if (!force && !AppliedLayers.Add(layerId)) return;
+        if (force)
+            AppliedLayers.Add(layerId);
+
+        SetSimpleUiMaskInteraction(customCosmeticsLayer.hat1);
+        SetSimpleUiMaskInteraction(customCosmeticsLayer.hat2);
+        SetSimpleUiMaskInteraction(customCosmeticsLayer.visor1);
+        SetSimpleUiMaskInteraction(customCosmeticsLayer.visor2);
+    }
+
+    private static void SetSimpleUiMaskInteraction(CustomHatLayer hatLayer)
+    {
+        if (hatLayer == null) return;
+
+        hatLayer.SetMaskType(PlayerMaterial.MaskType.SimpleUI);
+        if (hatLayer.FrontLayer != null)
+            hatLayer.FrontLayer.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+        if (hatLayer.BackLayer != null)
+            hatLayer.BackLayer.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+    }
+
+    private static void SetSimpleUiMaskInteraction(CustomVisorLayer visorLayer)
+    {
+        if (visorLayer == null) return;
+
+        visorLayer.SetMaskType(PlayerMaterial.MaskType.SimpleUI);
+        if (visorLayer.Image != null)
+            visorLayer.Image.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+    }
+}
+[HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.CoStartGame))]
+public static class AmongUsClient_CoStartGame_Patch
+{
+    public static void Postfix()
+    {
+        foreach (PlayerControl player in PlayerControl.AllPlayerControls)
+        {
+            if (player?.cosmetics?.nameTextContainer == null) continue;
+
+            _ = CustomCosmeticsLayers.ExistsOrInitialize(player.cosmetics);
+
+            foreach (var textMeshPro in player.cosmetics.nameTextContainer.GetComponentsInChildren<TextMeshPro>())
+            {
+                textMeshPro.sortingOrder = 500;
+            }
+        }
+    }
+}
+[HarmonyPatch(typeof(ExileController), nameof(ExileController.Begin))]
+public static class ExileController_Begin
+{
+    public static void Postfix(ExileController __instance)
+    {
+        if (__instance.initData.networkedPlayer == null) return;
+        if (__instance.initData.networkedPlayer.Object == null) return;
+        __instance.Player.UpdateFromEitherPlayerDataOrCache(__instance.initData.networkedPlayer, PlayerOutfitType.Default, PlayerMaterial.MaskType.Exile, false, (Il2CppSystem.Action)(() =>
+        {
+            SkinViewData skinViewData = null;
+            skinViewData = (!(GameManager.Instance != null)) ? __instance.Player.GetSkinView() : ShipStatus.Instance.CosmeticsCache.GetSkin(__instance.initData.outfit.SkinId);
+            if (GameManager.Instance != null && !DestroyableSingleton<HatManager>.Instance.CheckLongModeValidCosmetic(__instance.initData.outfit.SkinId, __instance.Player.GetIgnoreLongMode()))
+            {
+                skinViewData = ShipStatus.Instance.CosmeticsCache.GetSkin("skin_None");
+            }
+            if (__instance.useIdleAnim)
+            {
+                __instance.Player.FixSkinSprite(skinViewData.IdleFrame);
+            }
+            else
+            {
+                __instance.Player.FixSkinSprite(skinViewData.EjectFrame);
+            }
+        }));
+        if (!__instance.useIdleAnim)
+        {
+            CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance.Player.cosmetics);
+            customCosmeticsLayer.hat1.transform.localPosition = __instance.exileHatPosition;
+            customCosmeticsLayer.hat2.transform.localPosition = __instance.exileHatPosition;
+            customCosmeticsLayer.visor1.transform.localPosition = __instance.exileVisorPosition;
+            customCosmeticsLayer.visor2.transform.localPosition = __instance.exileVisorPosition;
+            switch ((MapNames)GameOptionsManager.Instance.CurrentGameOptions.MapId)
+            {
+                case MapNames.Airship:
+                    customCosmeticsLayer.ModdedCosmetics.transform.localPosition = new(0.6f, 0.4f, -0.0001f);
+                    customCosmeticsLayer.ModdedCosmetics.transform.Rotate(new(0, 0, 50));
+                    break;
+                case MapNames.Polus:
+                    customCosmeticsLayer.ModdedCosmetics.transform.localPosition = new(0.4f, 0.2f, -0.0001f);
+                    customCosmeticsLayer.ModdedCosmetics.transform.Rotate(new(0, 0, 10));
+                    break;
+            }
+        }
+    }
+}
+[HarmonyPatch(typeof(MeetingIntroAnimation), nameof(MeetingIntroAnimation.Init))]
+public static class MeetingIntroAnimation_Init
+{
+    public static void Postfix(MeetingIntroAnimation __instance)
+    {
+        PlayerVoteArea area = __instance.GetComponentInChildren<PlayerVoteArea>();
+        if (area?.PlayerIcon?.cosmetics == null) return;
+
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(area.PlayerIcon.cosmetics);
+        CustomCosmeticsMeetingMask.SetSimpleUiMask(customCosmeticsLayer, force: true);
+    }
+}
+[HarmonyCoroutinePatch(typeof(MushroomMixupPlayerAnimation), nameof(MushroomMixupPlayerAnimation.CoPlay))]
+public static class MushroomMixupPlayerAnimation_CoPlay
+{
+    public static void Postfix(object __instance)
+    {
+        MushroomMixupPlayerAnimation instance = HarmonyCoroutinePatchProcessor.GetParentFromCoroutine<MushroomMixupPlayerAnimation>(__instance);
+        if (instance == null) return;
+        instance.sprite.sortingOrder = 1000;
+        if (((ExPlayerControl)instance.player).TryGetAbility<JumboAbility>(out var jumboAbility))
+            instance.transform.localScale = Vector3.one * ((jumboAbility._currentSize + 1f) / 2.7f);
+    }
+}
+[HarmonyPatch(typeof(RoleEffectAnimation), nameof(RoleEffectAnimation.Play))]
+public static class RoleEffectAnimation_Play
+{
+    public static void Postfix(RoleEffectAnimation __instance)
+    {
+        __instance.Renderer.sortingOrder = 1000;
+    }
+}
+[HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.Shapeshift))]
+public static class PlayerControl_Shapeshift
+{
+    public static void Postfix(PlayerControl __instance, PlayerControl targetPlayer, bool animate)
+    {
+        CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(__instance.cosmetics);
+        CustomCosmeticsLayer pcLayer = CustomCosmeticsLayers.ExistsOrInitialize(targetPlayer.cosmetics);
+        if (__instance == targetPlayer)
+        {
+            customCosmeticsLayer?.hat1?.FinishShapeshift(__instance.Data.DefaultOutfit.ColorId);
+            customCosmeticsLayer?.hat2?.FinishShapeshift(__instance.Data.DefaultOutfit.ColorId);
+            customCosmeticsLayer?.visor1?.FinishShapeshift(__instance.Data.DefaultOutfit.ColorId);
+            customCosmeticsLayer?.visor2?.FinishShapeshift(__instance.Data.DefaultOutfit.ColorId);
+            return;
+        }
+        customCosmeticsLayer?.hat1?.SetShapeshiftHat(pcLayer.hat1.DefaultHat?.ProdId ?? "", targetPlayer.Data.DefaultOutfit.ColorId);
+        customCosmeticsLayer?.visor1?.SetShapeshiftVisor(pcLayer.visor1.DefaultVisor?.ProdId ?? "", targetPlayer.Data.DefaultOutfit.ColorId);
+        customCosmeticsLayer?.hat2?.SetShapeshiftHat(pcLayer.hat2.DefaultHat?.ProdId ?? "", targetPlayer.Data.DefaultOutfit.ColorId);
+        customCosmeticsLayer?.visor2?.SetShapeshiftVisor(pcLayer.visor2.DefaultVisor?.ProdId ?? "", targetPlayer.Data.DefaultOutfit.ColorId);
+    }
+}
+[HarmonyPatch(typeof(MushroomMixupSabotageSystem), nameof(MushroomMixupSabotageSystem.MushroomMixUp))]
+public static class MushroomMixupSabotageSystem_MushroomMixUp
+{
+    public static void Postfix(MushroomMixupSabotageSystem __instance)
+    {
+        foreach (ExPlayerControl player in ExPlayerControl.ExPlayerControls)
+        {
+            CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(player.cosmetics);
+            customCosmeticsLayer.hat2.gameObject.SetActive(false);
+            customCosmeticsLayer.visor2.gameObject.SetActive(false);
+        }
+    }
+}
+[HarmonyPatch(typeof(MushroomMixupSabotageSystem), nameof(MushroomMixupSabotageSystem.Deteriorate))]
+public static class MushroomMixupSabotageSystem_Deteriorate
+{
+    public static void Prefix(MushroomMixupSabotageSystem __instance)
+    {
+        if (!(__instance.currentSecondsUntilHeal <= 0f))
+        {
+            return;
+        }
+        foreach (ExPlayerControl player in ExPlayerControl.ExPlayerControls)
+        {
+            CustomCosmeticsLayer customCosmeticsLayer = CustomCosmeticsLayers.ExistsOrInitialize(player.cosmetics);
+            customCosmeticsLayer.hat2.gameObject.SetActive(true);
+            customCosmeticsLayer.visor2.gameObject.SetActive(true);
+        }
+        RestorePetOnlyMeState();
+    }
+
+    private static void RestorePetOnlyMeState()
+    {
+        if (!GeneralSettingOptions.PetOnlyMe) return;
+
+        foreach (var player in ExPlayerControl.ExPlayerControls)
+        {
+            if (player?.Player == null || player.Player.Data == null || player.Player.cosmetics == null) continue;
+            if (player.IsDead()) continue;
+
+            if (player.AmOwner)
+            {
+                string petId = player.Player.Data.DefaultOutfit.PetId;
+                if (string.IsNullOrEmpty(petId))
+                    petId = DataManager.Player.Customization.Pet;
+                player.Player.SetPet(petId ?? string.Empty);
+            }
+            else
+            {
+                player.Player.SetPet(string.Empty);
+            }
+        }
+    }
+}
+
+public static class CustomCosmeticsAlpha
+{
+    public static void Set(CosmeticsLayer cosmeticsLayer, float alpha)
+    {
+        Set(CustomCosmeticsLayers.ExistsOrInitialize(cosmeticsLayer), alpha);
+    }
+
+    public static void Set(CustomCosmeticsLayer customCosmeticsLayer, float alpha)
+    {
+        if (customCosmeticsLayer == null) return;
+
+        Color color = new(1f, 1f, 1f, alpha);
+        customCosmeticsLayer.hat1.SpriteColor = color;
+        customCosmeticsLayer.hat2.SpriteColor = color;
+        customCosmeticsLayer.visor1.Alpha = alpha;
+        customCosmeticsLayer.visor2.Alpha = alpha;
+    }
+}

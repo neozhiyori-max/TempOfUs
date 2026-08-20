@@ -1,0 +1,88 @@
+using System;
+using AmongUs.GameOptions;
+using SuperNewRoles.Events;
+using SuperNewRoles.Events.PCEvents;
+using SuperNewRoles.Modules;
+using SuperNewRoles.Roles.Impostor;
+using SuperNewRoles.Roles.Neutral;
+using UnityEngine;
+
+namespace SuperNewRoles.Roles.Ability;
+
+public class AmnesiacAbility : AbilityBase
+{
+    private ExPlayerControl _willChangeRole;
+
+    public AmnesiacAbility()
+    {
+    }
+
+    public override void AttachToLocalPlayer()
+    {
+        SubscribeWithAbility(CalledMeetingEvent.Instance, OnCalledMeeting);
+        SubscribeWithAbility(MeetingCloseEvent.Instance, OnMeetingClose);
+    }
+
+    private void OnCalledMeeting(CalledMeetingEventData data)
+    {
+        // イベントを起こしたプレイヤーが自分でない場合は処理しない
+        if (data.reporter.PlayerId != Player.PlayerId) return;
+
+        // ターゲットが存在しない場合（会議ボタンでの呼び出し）は処理しない
+        if (data.target == null) return;
+
+        // 死体のプレイヤーIDを取得
+        byte deadPlayerId = data.target.PlayerId;
+
+        // 死体のプレイヤーを取得
+        ExPlayerControl deadPlayer = ExPlayerControl.ById(deadPlayerId);
+        if (deadPlayer == null) return;
+        if (OrpheusMainAbility.WasRitualCorpseReported(deadPlayerId)) return;
+
+        // 役職変更のRPCを呼び出す
+        _willChangeRole = deadPlayer;
+    }
+
+    private void OnMeetingClose(MeetingCloseEventData data)
+    {
+        if (_willChangeRole == null) return;
+        if (Player.IsDead()) return;
+        RpcChangeRole(Player, _willChangeRole);
+        _willChangeRole = null;
+    }
+
+    [CustomRPC]
+    public static void RpcChangeRole(ExPlayerControl amnesiac, ExPlayerControl deadPlayer)
+    {
+        // nullチェックを追加
+        if (amnesiac == null || deadPlayer == null || amnesiac.Player == null || deadPlayer.Player == null)
+        {
+            Logger.Error("AmnesiacAbility.RpcChangeRole: プレイヤーまたはそのプレイヤーオブジェクトがnullです");
+            return;
+        }
+
+        // 死体のプレイヤーの役職とチームを取得
+        RoleId targetRoleId = deadPlayer.Role;
+
+        // 忘却者の役職を変更
+        amnesiac.ReverseRole(deadPlayer, recordTargetHistory: false);
+
+        RoleTypes newRole = deadPlayer.Data.Role.Role switch
+        {
+            RoleTypes.CrewmateGhost => RoleTypes.Crewmate,
+            RoleTypes.ImpostorGhost => RoleTypes.Impostor,
+            _ => deadPlayer.Data.Role.Role,
+        };
+        FastDestroyableSingleton<RoleManager>.Instance.SetRole(amnesiac.Player, newRole);
+
+        deadPlayer.SetRole(targetRoleId, recordHistory: false);
+        amnesiac.CopyTaskProgressFrom(deadPlayer);
+        // 役職変更後にゲーム状態を再チェック
+        new LateTask(() =>
+        {
+            // エクスプレイヤーコントロールの名前テキストを更新
+            NameText.UpdateAllNameInfo();
+        }, 0.1f);
+    }
+
+}

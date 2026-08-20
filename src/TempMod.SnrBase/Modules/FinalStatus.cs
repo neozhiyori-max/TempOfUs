@@ -1,0 +1,84 @@
+using AmongUs.GameOptions;
+using SuperNewRoles.Events;
+using SuperNewRoles.Events.PCEvents;
+
+namespace SuperNewRoles.Modules;
+
+public enum FinalStatus
+{
+    None,
+    Alive,
+    Kill,
+    Disconnect,
+    Revange,
+    Exiled,
+    GuesserKill,
+    GuesserMisFire,
+    Sabotage,
+    WaveCannon,
+    FalseCharge,
+    Suicide,
+    Samurai,
+    BombBySelfBomb,
+    SelfBomb,
+    Tuna,
+    Push,
+    Ignite,
+    FalseCharges,
+    SheriffKill,
+    SheriffWrongfulMurder,
+    SheriffMisFire,
+    SheriffSuicide,
+    LoversSuicide,
+    LaunchByRocket,
+    VampireKill,
+    VampireWithDead,
+    SpelunkerSetRoleDeath,
+    SpelunkerVentDeath,
+    SpelunkerCommsElecDeath,
+    SpelunkerOpenDoor,
+    NunDeath,
+    LadderDeath,
+    BansheeWhisper,
+    HappyGatling,
+    SluggerSlug,
+    TheThirdLittlePigCounterKill,
+    ConjurerMagic,
+    RocketLauncher,
+}
+
+public static class FinalStatusListener
+{
+    public static void LoadListener()
+    {
+        WrapUpEvent.Instance.AddListener(x => SetFinalStatus(x.exiled, FinalStatus.Exiled));
+        MurderEvent.Instance.AddListener(x =>
+        {
+            if (x.resultFlags.HasFlag(MurderResultFlags.Succeeded))
+                SetFinalStatus(x.target, FinalStatus.Kill);
+        });
+        DisconnectEvent.Instance.AddListener(x => SetFinalStatus(x.disconnectedPlayer, FinalStatus.Disconnect));
+    }
+    private static void SetFinalStatus(ExPlayerControl exPlayer, FinalStatus finalStatus)
+    {
+        if (exPlayer == null) return;
+        var oldStatus = exPlayer.FinalStatus;
+        exPlayer.FinalStatus = finalStatus;
+        Logger.Info($"[FinalStatus] {exPlayer.PlayerId}:{exPlayer.Player?.name ?? "??"}({exPlayer.Role}): {oldStatus} -> {finalStatus}", "SNR.GameState");
+    }
+}
+public static class FinalStatusManager
+{
+    [CustomRPC]
+    public static void RpcSetFinalStatus(ExPlayerControl exPlayer, FinalStatus finalStatus)
+    {
+        SetFinalStatus(exPlayer, finalStatus);
+    }
+    public static void SetFinalStatus(ExPlayerControl exPlayer, FinalStatus finalStatus)
+    {
+        if (exPlayer == null) return;
+        var oldStatus = exPlayer.FinalStatus;
+        exPlayer.FinalStatus = finalStatus;
+        Logger.Info($"[FinalStatus] {exPlayer.PlayerId}:{exPlayer.Player?.name ?? "??"}({exPlayer.Role}): {oldStatus} -> {finalStatus}", "SNR.GameState");
+    }
+}

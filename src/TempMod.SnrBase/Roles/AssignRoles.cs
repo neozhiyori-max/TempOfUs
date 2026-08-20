@@ -1,0 +1,766 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using AmongUs.GameOptions;
+using HarmonyLib;
+using SuperNewRoles.CustomOptions.Categories;
+using SuperNewRoles.Mode;
+using SuperNewRoles.Modules;
+using SuperNewRoles.Roles.Modifiers;
+using SuperNewRoles.Roles.Neutral;
+
+namespace SuperNewRoles.Roles;
+
+[HarmonyPatch(typeof(GameStartManager), nameof(GameStartManager.Start))]
+class GameStartManagerStartPatch
+{
+    public static void Postfix()
+    {
+        AssignRoles.LoversIndex = 0;
+        var client = AmongUsClient.Instance;
+        if (client != null && client.AmHost)
+            RoleAssignmentFairnessRuntime.EnterLobby(client.GameId);
+    }
+}
+[HarmonyPatch(typeof(RoleManager), nameof(RoleManager.SelectRoles))]
+public static class RoleManagerSelectRolesPatch
+{
+    public static bool Prefix(RoleManager __instance, out bool __state)
+    {
+        __state = false;
+        // BattleRoyalは独自の配役経路を持つため、通常ゲーム用の公平化処理を通さない。
+        if (ModeManager.IsMode(ModeId.BattleRoyal))
+        {
+            RoleAssignmentFairnessRuntime.Reset();
+            return false;
+        }
+        var list = AmongUsClient.Instance.allClients.ToArray();
+        var list2 = (from c in list
+                     where c.Character != null
+                     where c.Character.Data != null
+                     where !c.Character.Data.Disconnected && !c.Character.Data.IsDead
+                     orderby c.Id
+                     select c.Character.Data).ToList();
+        foreach (NetworkedPlayerInfo allPlayer in GameData.Instance.AllPlayers)
+        {
+            if (allPlayer.Object != null && allPlayer.Object.isDummy)
+            {
+                list2.Add(allPlayer);
+            }
+        }
+        IGameOptions currentGameOptions = GameOptionsManager.Instance.CurrentGameOptions;
+        // 既存仕様どおり、設定されたインポスター数をそのまま使ってバニラ側の再検証を避ける。
+        int numImpostors = ModeManager.IsMode(ModeId.WCBattleRoyal) ? 0 : GameOptionsManager.Instance.CurrentGameOptions.NumImpostors;
+        var debugCandidates = list2.ToIl2CppList();
+        __instance.DebugRoleAssignments(debugCandidates, ref numImpostors);
+
+        // DebugRoleAssignmentsが候補を調整し終えた後に、公平化用のゲームスナップショットを開始する。
+        __state = RoleAssignmentFairnessRuntime.TryBeginAssignment();
+        // 公平化が無効・失敗した場合も、DebugRoleAssignmentsによる候補調整を維持する。
+        List<NetworkedPlayerInfo> impostorCandidates = debugCandidates.ToSystemList();
+        if (__state && numImpostors > 0 &&
+            RoleAssignmentFairnessRuntime.TrySelectImpostors(
+                debugCandidates.ToSystemList(),
+                numImpostors,
+                out var fairImpostorCandidates,
+                out var pendingImpostorResult) &&
+            RoleAssignmentFairnessRuntime.Record(pendingImpostorResult))
+        {
+            impostorCandidates = fairImpostorCandidates;
+        }
+
+        GameManager.Instance.LogicRoleSelection.AssignRolesForTeam(impostorCandidates.ToIl2CppList(), currentGameOptions, RoleTeamTypes.Impostor, numImpostors, new Il2CppSystem.Nullable<RoleTypes>(RoleTypes.Impostor));
+        // Crewmate側は既存の役職出現分布を変えないため、従来どおり全候補を渡す。
+        GameManager.Instance.LogicRoleSelection.AssignRolesForTeam(list2.ToIl2CppList(), currentGameOptions, RoleTeamTypes.Crewmate, int.MaxValue, new Il2CppSystem.Nullable<RoleTypes>(RoleTypes.Crewmate));
+        return false;
+    }
+    public static void Postfix(RoleManager __instance, bool __state)
+    {
+        if (ModeManager.IsMode(ModeId.BattleRoyal))
+            return;
+        bool succeeded = AssignRoles.AssignCustomRoles();
+        RoleAssignmentFairnessRuntime.FinishAssignment(succeeded);
+    }
+    public static Exception Finalizer(Exception __exception, bool __state)
+    {
+        if (__exception != null && RoleAssignmentFairnessRuntime.MustStopAfterRoleRpcFailure)
+            RoleAssignmentFairnessRuntime.AbortAssignment("UnhandledAssignmentException", null);
+        return __exception;
+    }
+}
+
+public static class AssignRoles
+{
+    [CustomOptionInt("AssignRoles_MaxImpostors", 0, 15, 1, 2, parentFieldName: nameof(Categories.GeneralSettings))]
+    public static int MaxImpostors;
+    [CustomOptionInt("AssignRoles_MaxCrews", 0, 15, 1, 2, parentFieldName: nameof(Categories.GeneralSettings))]
+    public static int MaxCrews;
+    [CustomOptionInt("AssignRoles_MaxNeutrals", 0, 15, 1, 2, parentFieldName: nameof(Categories.GeneralSettings))]
+    public static int MaxNeutrals;
+
+    public static byte LoversIndex = 0;
+
+    private static Dictionary<AssignedTeamType, List<AssignTickets>> AssignTickets_HundredPercent = new();
+    private static Dictionary<AssignedTeamType, List<AssignTickets>> AssignTickets_NotHundredPercent = new();
+    private static List<RoleId> AssignedRoleIds = new(); // 既にアサインされた役職のIDを追跡
+
+    public static bool AssignCustomRoles()
+    {
+        try
+        {
+            Logger.Info("AssignCustomRoles() 開始: カスタム役職のアサイン処理を開始します。");
+            Logger.Info($"[GameStart] Map={GameOptionsManager.Instance.CurrentGameOptions.MapId}, Players={PlayerControl.AllPlayerControls.Count}, Mode={Categories.ModeOption}", "SNR.GameState");
+
+            // プレイヤーの接続状態を確認
+            if (PlayerControl.AllPlayerControls == null)
+            {
+                Logger.Error("PlayerControl.AllPlayerControls is null in AssignCustomRoles");
+                return false;
+            }
+
+            var disconnectedPlayers = PlayerControl.AllPlayerControls.ToArray()
+                .Where(p => p == null || p.Data == null || p.Data.Disconnected)
+                .ToArray();
+
+            if (disconnectedPlayers.Length > 0)
+            {
+                Logger.Warning($"Found {disconnectedPlayers.Length} disconnected players during role assignment");
+            }
+
+            CreateTickets();
+            AssignedRoleIds.Clear(); // 役職アサイン前にクリア
+
+            foreach (PlayerControl player in PlayerControl.AllPlayerControls)
+            {
+                if (player == null || player.Data == null || player.Data.Disconnected)
+                {
+                    Logger.Warning($"Skipping disconnected player in role assignment");
+                    continue;
+                }
+
+                if (!player.Data.Role.IsSimpleRole)
+                    AssignRole(player, player.Data.Role.IsImpostor ? RoleId.Impostor : RoleId.Crewmate);
+            }
+
+            // インポスター陣営のカスタム役職を割り当てる。
+            AssignTickets(AssignTickets_HundredPercent[AssignedTeamType.Impostor],
+            AssignTickets_NotHundredPercent[AssignedTeamType.Impostor],
+            true, MaxImpostors);
+
+            // 第三陣営のカスタム役職を割り当てる。
+            AssignTickets(AssignTickets_HundredPercent[AssignedTeamType.Neutral],
+            AssignTickets_NotHundredPercent[AssignedTeamType.Neutral],
+            false, MaxNeutrals);
+
+            if (JackalFriends.JackalFriendsDontAssignIfJackalNotAssigned && !ExPlayerControl.ExPlayerControls.Any(player => player.IsJackalTeam()))
+            {
+                AssignTickets_HundredPercent[AssignedTeamType.Crewmate].RemoveAll(ticket => ticket.RoleOption.RoleId == RoleId.JackalFriends);
+                AssignTickets_NotHundredPercent[AssignedTeamType.Crewmate].RemoveAll(ticket => ticket.RoleOption.RoleId == RoleId.JackalFriends);
+            }
+
+            // クルーメイト陣営のカスタム役職を割り当てる。
+            AssignTickets(AssignTickets_HundredPercent[AssignedTeamType.Crewmate],
+            AssignTickets_NotHundredPercent[AssignedTeamType.Crewmate],
+            false, MaxCrews);
+
+            // Modifierの選出
+            AssignModifiers();
+
+            // Loversの選出
+            AssignLovers();
+
+            // 役職割り当てサマリー
+            var roleSummary = string.Join(", ", ExPlayerControl.ExPlayerControls
+                .Select(x => $"{x.PlayerId}:{x.Player?.name ?? "??"}={x.Role}" +
+                    (x.ModifierRole != ModifierRoleId.None ? $"+{x.ModifierRole}" : "") +
+                    (x.GhostRole != GhostRoleId.None ? $"+{x.GhostRole}" : "")));
+            Logger.Info($"[RoleAssignSummary] {roleSummary}", "SNR.GameState");
+
+            Logger.Info("AssignCustomRoles() 終了: カスタム役職のアサイン処理が完了しました。");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Error in AssignCustomRoles: {ex.Message}\n{ex.StackTrace}");
+            // エラーが発生してもゲームを続行できるようにする
+            return false;
+        }
+    }
+    private static void CreateTickets()
+    {
+        foreach (var team in Enum.GetValues(typeof(AssignedTeamType)).Cast<AssignedTeamType>())
+        {
+            AssignTickets_HundredPercent[team] = new();
+            AssignTickets_NotHundredPercent[team] = new();
+        }
+        foreach (var roleOption in RoleOptionManager.RoleOptions)
+        {
+            if (roleOption.NumberOfCrews <= 0)
+                continue;
+            if (CustomRoleManager.TryGetRoleById(roleOption.RoleId, out var role) &&
+                role.AvailableMaps.Length != 0 &&
+                !role.AvailableMaps.Any(map => (byte)map == GameOptionsManager.Instance.CurrentGameOptions.MapId))
+                continue;
+            //HiddenOptionのチェック
+            if (CustomRoleManager.TryGetRoleById(roleOption.RoleId, out var roleBase) && roleBase.HiddenOption)
+            {
+                Logger.Info($"CreateTickets: Role {roleOption.RoleId} はHiddenOptionのためスキップします。");
+                continue;
+            }
+            // LoversBreaker役職の特別な選出条件をチェック
+            if (roleOption.RoleId == RoleId.LoversBreaker && ShouldSkipLoversBreakerAssignment())
+                continue;
+
+            if (roleOption.Percentage >= 100)
+            {
+                AssignTickets_HundredPercent[roleOption.AssignTeam].Add(new AssignTickets(roleOption));
+            }
+            else if (roleOption.Percentage > 0)
+            {
+                var ticket = new AssignTickets(roleOption);
+                for (int i = 0; i < (roleOption.Percentage / 10); i++)
+                {
+                    AssignTickets_NotHundredPercent[roleOption.AssignTeam].Add(ticket);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// LoversBreaker役職の選出をスキップするかどうかを判定します。
+    /// Lovers、Truelover、Cupidの全ての確率または選出数が0の場合にtrueを返します。
+    /// </summary>
+    private static bool ShouldSkipLoversBreakerAssignment()
+    {
+        // Lovers（Modifier）の確率と選出数をチェック
+        bool loversDisabled = true;
+        if (Lovers.LoversSpawnChance > 0 && Lovers.LoversMaxCoupleCount > 0)
+            loversDisabled = false;
+
+        // Truelover役職の確率と選出数をチェック
+        bool trueloverDisabled = true;
+        if (RoleOptionManager.TryGetRoleOption(RoleId.Truelover, out var trueloverOption))
+        {
+            if (trueloverOption.Percentage > 0 && trueloverOption.NumberOfCrews > 0)
+            {
+                trueloverDisabled = false;
+            }
+        }
+
+        // Cupid役職の確率と選出数をチェック
+        bool cupidDisabled = true;
+        if (RoleOptionManager.TryGetRoleOption(RoleId.Cupid, out var cupidOption))
+        {
+            if (cupidOption.Percentage > 0 && cupidOption.NumberOfCrews > 0)
+            {
+                cupidDisabled = false;
+            }
+        }
+
+        // 全ての役職が無効化されている場合はLoversBreaker役職をスキップ
+        bool shouldSkip = loversDisabled && trueloverDisabled && cupidDisabled;
+
+        if (shouldSkip)
+        {
+            Logger.Info("LoversBreaker役職をスキップします: Lovers、Truelover、Cupidの全ての確率または選出数が0です。");
+        }
+
+        return shouldSkip;
+    }
+    private static void AssignTickets(List<AssignTickets> tickets_hundred, List<AssignTickets> tickets_not_hundred, bool isImpostor, int maxBeans)
+    {
+        List<PlayerControl> targetPlayers = new();
+        foreach (PlayerControl player in PlayerControl.AllPlayerControls)
+        {
+            if (player.Data.Role.IsSimpleRole && player.Data.Role.IsImpostor == isImpostor && (isImpostor || ((ExPlayerControl)player).Role is RoleId.Crewmate or RoleId.None))
+                targetPlayers.Add(player);
+        }
+        if (targetPlayers.Count <= 0)
+            return;
+
+        // 100%チケットの割り当て処理
+        while (tickets_hundred.Count > 0 && targetPlayers.Count > 0 && maxBeans > 0)
+        {
+            int ticketIndex = ModHelpers.GetRandomInt(tickets_hundred.Count - 1);
+            AssignTickets selectedTicket = tickets_hundred[ticketIndex];
+            selectedTicket.IncrementRemainingAssignBeans();
+            if (selectedTicket.RemainingAssignBeans <= 0)
+                tickets_hundred.RemoveAt(ticketIndex);
+
+            RoleId roleId = selectedTicket.RoleOption.RoleId;
+            if (TryAssignTeamRole(roleId, targetPlayers, ref maxBeans))
+            {
+                AssignedRoleIds.Add(roleId);
+            }
+            else
+            {
+                bool isTeamRole = CustomRoleManager.TryGetRoleById(roleId, out var teamRoleBase) && teamRoleBase is ITeamRoleBase;
+                if (isTeamRole)
+                {
+                    Logger.Info($"Skip team role {roleId}: failed to assign a full team");
+                }
+                else
+                {
+                    int playerIndex;
+                    if (!RoleAssignmentFairnessRuntime.TrySelectCustomRolePlayer(
+                            targetPlayers,
+                            roleId,
+                            out playerIndex,
+                            out var pendingResult) ||
+                        !RoleAssignmentFairnessRuntime.Record(pendingResult))
+                    {
+                        playerIndex = ModHelpers.GetRandomInt(targetPlayers.Count - 1);
+                    }
+                    PlayerControl targetPlayer = targetPlayers[playerIndex];
+                    targetPlayers.RemoveAt(playerIndex);
+
+                    AssignRole(targetPlayer, roleId);
+                    AssignedRoleIds.Add(roleId); // アサインした役職を追跡
+                    maxBeans--;
+                }
+            }
+
+            // 排他設定を再度適用（次のループのために）
+            RoleOptionManager.ApplyExclusivitySettings(AssignedRoleIds, AssignTickets_NotHundredPercent.Values.ToArray(), AssignTickets_HundredPercent.Values.ToArray());
+        }
+
+        // 100%未満のチケットからランダムに選択して割り当てる
+        while (tickets_not_hundred.Count > 0 && targetPlayers.Count > 0 && maxBeans > 0)
+        {
+            // 排他設定を適用
+            RoleOptionManager.ApplyExclusivitySettings(AssignedRoleIds, AssignTickets_NotHundredPercent.Values.ToArray(), AssignTickets_HundredPercent.Values.ToArray());
+            if (tickets_not_hundred.Count == 0)
+                break;
+
+            int ticketIndex = ModHelpers.GetRandomInt(tickets_not_hundred.Count - 1);
+            AssignTickets selectedTicket = tickets_not_hundred[ticketIndex];
+            selectedTicket.IncrementRemainingAssignBeans();
+            if (selectedTicket.RemainingAssignBeans <= 0)
+                tickets_not_hundred.RemoveAll(x => x.RoleOption.RoleId == selectedTicket.RoleOption.RoleId);
+
+            RoleId roleId = selectedTicket.RoleOption.RoleId;
+            if (TryAssignTeamRole(roleId, targetPlayers, ref maxBeans))
+            {
+                AssignedRoleIds.Add(roleId);
+            }
+            else
+            {
+                bool isTeamRole = CustomRoleManager.TryGetRoleById(roleId, out var teamRoleBase) && teamRoleBase is ITeamRoleBase;
+                if (isTeamRole)
+                {
+                    Logger.Info($"Skip team role {roleId}: failed to assign a full team");
+                }
+                else
+                {
+                    int playerIndex;
+                    if (!RoleAssignmentFairnessRuntime.TrySelectCustomRolePlayer(
+                            targetPlayers,
+                            roleId,
+                            out playerIndex,
+                            out var pendingResult) ||
+                        !RoleAssignmentFairnessRuntime.Record(pendingResult))
+                    {
+                        playerIndex = targetPlayers.GetRandomIndex();
+                    }
+                    PlayerControl targetPlayer = targetPlayers[playerIndex];
+                    targetPlayers.RemoveAt(playerIndex);
+
+                    AssignRole(targetPlayer, roleId);
+                    AssignedRoleIds.Add(roleId); // アサインした役職を追跡
+                    maxBeans--;
+                }
+            }
+
+            // 排他設定を再度適用（次のループのために）
+            RoleOptionManager.ApplyExclusivitySettings(AssignedRoleIds, AssignTickets_NotHundredPercent.Values.ToArray(), AssignTickets_HundredPercent.Values.ToArray());
+        }
+        foreach (var player in targetPlayers)
+        {
+            AssignRole(player, isImpostor ? RoleId.Impostor : RoleId.Crewmate);
+        }
+    }
+
+    /// <summary>
+    /// TeamRoleBase(=n人1組選出) の割り当てを試みます。
+    /// 成功した場合、targetPlayers から TeamSize 人を削除し、maxBeans を TeamSize 分減らして true を返します。
+    /// </summary>
+    private static bool TryAssignTeamRole(RoleId roleId, List<PlayerControl> targetPlayers, ref int maxBeans)
+    {
+        if (!CustomRoleManager.TryGetRoleById(roleId, out var roleBase))
+            return false;
+
+        if (roleBase is not ITeamRoleBase teamRole)
+            return false;
+
+        int teamSize = teamRole.TeamSize;
+        if (teamSize <= 0)
+        {
+            Logger.Error($"Invalid TeamSize for team role {roleId}: {teamSize}");
+            return false;
+        }
+
+        // 役職枠上限/対象人数が足りない場合は割り当て不可
+        if (maxBeans < teamSize || targetPlayers.Count < teamSize)
+        {
+            Logger.Info($"Skip team role {roleId}: insufficient slots or players (TeamSize={teamSize}, maxBeans={maxBeans}, targets={targetPlayers.Count})");
+            return false;
+        }
+
+        List<PlayerControl> picked;
+        bool mustStopAfterRoleRpcFailure = RoleAssignmentFairnessRuntime.MustStopAfterRoleRpcFailure;
+        bool usedFairness = RoleAssignmentFairnessRuntime.TrySelectTeamRolePlayers(
+                targetPlayers,
+                teamRole,
+                out picked,
+                out var pendingResult) &&
+            RoleAssignmentFairnessRuntime.Record(pendingResult);
+        if (!usedFairness)
+        {
+            // 公平化OFFまたは検証失敗時は、従来の一様抽選へ完全に戻す。
+            // この分岐では公平化の選択結果を一切混ぜない。
+            picked = new List<PlayerControl>(teamSize);
+            for (int i = 0; i < teamSize; i++)
+            {
+                int idx = ModHelpers.GetRandomInt(targetPlayers.Count - 1);
+                picked.Add(targetPlayers[idx]);
+                targetPlayers.RemoveAt(idx);
+            }
+        }
+        else
+        {
+            foreach (var player in picked)
+                targetPlayers.Remove(player);
+        }
+
+        // 実際の割り当ては役職側に委譲
+        try
+        {
+            teamRole.AssignTeam(picked);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Failed to assign team role {roleId}: {ex}");
+            if (mustStopAfterRoleRpcFailure)
+            {
+                // 公平抽選から従来抽選へ戻した場合も含め、RPC開始後は
+                // 配役全体を中止し、外側ループからの再試行を防ぐ。
+                RoleAssignmentFairnessRuntime.AbortAssignment(
+                    "TeamRoleAssignmentFailed",
+                    RoleAssignmentCategory.CustomMainRole);
+                throw;
+            }
+
+            // 公平化OFFまたは対象外モードでは、従来の失敗処理を維持する。
+            targetPlayers.AddRange(picked);
+            return false;
+        }
+
+        maxBeans -= teamSize;
+        return true;
+    }
+    private static void AssignRole(PlayerControl player, RoleId roleId)
+    {
+        Logger.Info($"Assigning role {roleId} to player {player.PlayerId}");
+        ((ExPlayerControl)player).RpcCustomSetRole(roleId);
+    }
+    private static bool IsRoleFilteredByAssignFilter(RoleId roleId, List<RoleId> assignFilterList)
+    {
+        if (assignFilterList == null || assignFilterList.Count == 0)
+            return false;
+
+        if (assignFilterList.Contains(roleId))
+            return true;
+
+        foreach (var filterRoleId in assignFilterList)
+        {
+            if (CustomRoleManager.TryGetRoleById(filterRoleId, out var roleBase) && roleBase is ITeamRoleBase teamRole)
+            {
+                if (teamRole.MemberRoleIds.Contains(roleId))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+    private static void AssignModifiers()
+    {
+        Logger.Info("AssignModifiers() 開始: Modifierのアサイン処理を開始します。");
+        var allPlayers = ExPlayerControl.ExPlayerControls;
+        Logger.Info($"AssignModifiers: 全プレイヤー数 = {allPlayers.Count}");
+        var allModifiers = CustomRoleManager.AllModifiers;
+        Logger.Info($"AssignModifiers: 全Modifier数 = {allModifiers.Length}");
+
+        foreach (var modifierBase in allModifiers)
+        {
+            var modifierRoleId = modifierBase.ModifierRole;
+            Logger.Info($"AssignModifiers: Modifier処理開始 - ModifierRole = {modifierRoleId}");
+
+            var modifierRoleOption = RoleOptionManager.ModifierRoleOptions.FirstOrDefault(x => x.ModifierRoleId == modifierRoleId);
+            if (modifierRoleOption == null)
+            {
+                Logger.Info($"AssignModifiers: ModifierRoleOptionが見つからないため、ModifierRole {modifierRoleId} をスキップします。");
+                continue;
+            }
+            if (modifierBase.HiddenOption)
+            {
+                Logger.Info($"AssignModifiers: ModifierRole {modifierRoleId} は非表示のためスキップします。");
+                continue;
+            }
+
+            if (modifierBase.UseTeamSpecificAssignment)
+            {
+                AssignTeamSpecificModifier(modifierBase, modifierRoleOption);
+            }
+            else
+            {
+                if (modifierRoleOption.Percentage <= 0)
+                {
+                    Logger.Info($"AssignModifiers: ModifierRoleOptionのパーセンテージが0以下のため、ModifierRole {modifierRoleId} をスキップします。");
+                    continue;
+                }
+                List<ExPlayerControl> targetPlayers = ExPlayerControl.ExPlayerControls
+                    .Where(x => modifierBase.AssignedTeams.Count <= 0 || modifierBase.AssignedTeams.Contains(x.roleBase.AssignedTeam))
+                    .Where(x => !IsRoleFilteredByAssignFilter(x.Role, modifierRoleOption.AssignFilterList))
+                    .Where(x => modifierBase.DoNotAssignRoles.Length == 0 || !modifierBase.DoNotAssignRoles.Contains(x.Role))
+                    // .Where(x => modifierBase.ModifierAssignFilterTeam.Length == 0 || modifierBase.ModifierAssignFilterTeam.Contains(x.roleBase.AssignedTeam))
+                    .ToList();
+                Logger.Info($"AssignModifiers: ModifierRole {modifierRoleId} に適用可能なプレイヤー数 = {targetPlayers.Count}");
+
+                for (int i = 0; i < modifierRoleOption.NumberOfCrews; i++)
+                {
+                    Logger.Info($"AssignModifiers: ModifierRole {modifierRoleId} - ループ {i + 1}/{modifierRoleOption.NumberOfCrews} 開始");
+                    bool shouldAssign = ModHelpers.IsSuccessChance(modifierRoleOption.Percentage);
+                    Logger.Info($"AssignModifiers: ModifierRole {modifierRoleId} - ループ {i + 1} の割り当て判定 = {shouldAssign} (確率: {modifierRoleOption.Percentage}%)");
+                    if (!shouldAssign)
+                    {
+                        Logger.Info($"AssignModifiers: ModifierRole {modifierRoleId} - ループ {i + 1} はランダム判定により割り当てをスキップします。");
+                        continue;
+                    }
+                    if (targetPlayers.Count == 0)
+                    {
+                        Logger.Info($"AssignModifiers: ModifierRole {modifierRoleId} - ループ {i + 1} で対象プレイヤーが存在しないため、ループを終了します。");
+                        break;
+                    }
+                    int playerIndex = targetPlayers.GetRandomIndex();
+                    Logger.Info($"AssignModifiers: ModifierRole {modifierRoleId} - 選択されたプレイヤーインデックス = {playerIndex}");
+                    PlayerControl targetPlayer = targetPlayers[playerIndex];
+                    Logger.Info($"AssignModifiers: ModifierRole {modifierRoleId} - 選択されたプレイヤーID = {targetPlayer.PlayerId}");
+                    targetPlayers.RemoveAt(playerIndex);
+                    Logger.Info($"AssignModifiers: ModifierRole {modifierRoleId} - プレイヤー {targetPlayer.PlayerId} を対象リストから削除しました。");
+                    Logger.Info($"AssignModifiers: ModifierRole {modifierRoleId} - プレイヤー {targetPlayer.PlayerId} に対してModifierの割り当てを試みます。");
+                    AssignModifier(targetPlayer, modifierRoleId);
+                }
+            }
+            Logger.Info($"AssignModifiers: ModifierRole {modifierRoleId} の処理が完了しました。");
+        }
+        Logger.Info("AssignModifiers() 終了: 全てのModifier処理が完了しました。");
+    }
+
+    private static void AssignTeamSpecificModifier(IModifierBase modifierBase, RoleOptionManager.ModifierRoleOption modifierRoleOption)
+    {
+        Logger.Info($"AssignTeamSpecificModifier() 開始: ModifierRole {modifierBase.ModifierRole} の陣営別アサイン処理を開始します。");
+        var allPlayers = ExPlayerControl.ExPlayerControls;
+        var modifierRoleId = modifierBase.ModifierRole;
+
+        // インポスターへの割当
+        var impostors = allPlayers.Where(x => x.IsImpostor() &&
+                                        !x.ModifierRole.HasFlag(modifierRoleId) &&
+                                        !IsRoleFilteredByAssignFilter(x.Role, modifierRoleOption.AssignFilterList) &&
+                                        (modifierBase.DoNotAssignRoles.Length == 0 || !modifierBase.DoNotAssignRoles.Contains(x.Role)))
+                                .ToList();
+        for (int i = 0; i < modifierRoleOption.MaxImpostors; i++)
+        {
+            if (ModHelpers.IsSuccessChance(modifierRoleOption.ImpostorChance) && impostors.Count > 0)
+            {
+                var exPlayer = impostors[impostors.GetRandomIndex()];
+                impostors.Remove(exPlayer);
+                AssignModifier(exPlayer.Player, modifierRoleId);
+            }
+        }
+        // 第三陣営への割当
+        var neutrals = allPlayers.Where(x => x.IsNeutral() &&
+                                       !x.ModifierRole.HasFlag(modifierRoleId) &&
+                                       !IsRoleFilteredByAssignFilter(x.Role, modifierRoleOption.AssignFilterList) &&
+                                       (modifierBase.DoNotAssignRoles.Length == 0 || !modifierBase.DoNotAssignRoles.Contains(x.Role)))
+                               .ToList();
+        for (int i = 0; i < modifierRoleOption.MaxNeutrals; i++)
+        {
+            if (ModHelpers.IsSuccessChance(modifierRoleOption.NeutralChance) && neutrals.Count > 0)
+            {
+                var exPlayer = neutrals[neutrals.GetRandomIndex()];
+                neutrals.Remove(exPlayer);
+                AssignModifier(exPlayer.Player, modifierRoleId);
+            }
+        }
+        // クルーメイトへの割当
+        var crewmates = allPlayers.Where(x => x.IsCrewmateOrMadRoles() &&
+                                        !x.ModifierRole.HasFlag(modifierRoleId) &&
+                                        !IsRoleFilteredByAssignFilter(x.Role, modifierRoleOption.AssignFilterList) &&
+                                        (modifierBase.DoNotAssignRoles.Length == 0 || !modifierBase.DoNotAssignRoles.Contains(x.Role)))
+                                .ToList();
+        for (int i = 0; i < modifierRoleOption.MaxCrewmates; i++)
+        {
+            if (ModHelpers.IsSuccessChance(modifierRoleOption.CrewmateChance) && crewmates.Count > 0)
+            {
+                var exPlayer = crewmates[crewmates.GetRandomIndex()];
+                crewmates.Remove(exPlayer);
+                AssignModifier(exPlayer.Player, modifierRoleId);
+            }
+        }
+        Logger.Info($"AssignTeamSpecificModifier() 終了: ModifierRole {modifierBase.ModifierRole} の陣営別アサイン処理が完了しました。");
+    }
+
+    private static void AssignLovers()
+    {
+        LoversIndex = 0;
+        Logger.Info("AssignLovers() 開始: Loversのアサイン処理を開始します。");
+        // スポーン確率チェック
+        if (Lovers.LoversSpawnChance <= 0)
+        {
+            Logger.Info("AssignLovers: 生成確率が0以下のためスキップします。");
+            return;
+        }
+
+        // 生存プレイヤー取得
+        var candidates = ExPlayerControl.ExPlayerControls
+            .Where(p => !p.IsDead());
+
+        // オプションに応じて候補をフィルタリング
+        if (!Lovers.LoversIncludeImpostorsInSelection)
+        {
+            candidates = candidates
+                .Where(p => !p.Data.Role.IsImpostor);
+        }
+        if (!Lovers.LoversIncludeThirdTeamInSelection)
+        {
+            candidates = candidates
+                .Where(p => !p.IsNeutral());
+        }
+
+        // ModifierGuesserのAssignFilterを取得
+        if (RoleOptionManager.TryGetModifierRoleOption(ModifierRoleId.Lovers, out var modifierLovers))
+        {
+            if (modifierLovers.AssignFilterList.Count > 0)
+            {
+                candidates = candidates
+                    .Where(p => !IsRoleFilteredByAssignFilter(p.Role, modifierLovers.AssignFilterList));
+            }
+            if (Lovers.Instance.DoNotAssignRoles.Length > 0)
+            {
+                candidates = candidates
+                    .Where(p => !Lovers.Instance.DoNotAssignRoles.Contains(p.Role));
+            }
+        }
+
+        candidates = candidates.Where(p => p.Role is not RoleId.Truelover and not RoleId.Cupid and not RoleId.LoversBreaker);
+
+        var candidatesList = candidates.ToList();
+
+        // カップル数計算
+        int maxCouples = (int)Lovers.LoversMaxCoupleCount;
+        int coupleCount = Math.Min(maxCouples, candidatesList.Count / 2);
+        Logger.Info($"AssignLovers: カップル数 = {coupleCount}");
+
+        int impostorTriedCount = 0;
+
+        // カップル作成ループ
+        for (int i = 0; i < coupleCount; i++)
+        {
+            bool shouldAssign = ModHelpers.IsSuccessChance(Lovers.LoversSpawnChance);
+            Logger.Info($"AssignLovers: カップル {i + 1}/{coupleCount} 判定 = {shouldAssign} (確率: {Lovers.LoversSpawnChance}%)");
+            if (!shouldAssign)
+            {
+                Logger.Info($"AssignLovers: カップル {i + 1} はスキップ");
+                continue;
+            }
+            if (candidatesList.Count < 2)
+            {
+                Logger.Info("AssignLovers: 候補が2名未満のため終了します。");
+                break;
+            }
+
+            // ランダムで2名選択
+            int idxA = candidatesList.GetRandomIndex();
+            var playerA = candidatesList[idxA];
+            candidatesList.RemoveAt(idxA);
+            int idxB = candidatesList.GetRandomIndex();
+            var playerB = candidatesList[idxB];
+            candidatesList.RemoveAt(idxB);
+
+            // インポスター同士の組み合わせはスキップ
+            if ((playerA.IsImpostor() && playerB.IsImpostor()) ||
+                (playerA.IsJackal() && playerB.IsJackal()))
+            {
+                Logger.Info($"AssignLovers: インポスター同士({playerA.PlayerId}, {playerB.PlayerId})のためスキップします。");
+                // 候補リストに戻す
+                candidatesList.Add(playerA);
+                candidatesList.Add(playerB);
+                impostorTriedCount++;
+                // 100回までトライできる
+                if (impostorTriedCount <= 100)
+                    i--;
+                continue;
+            }
+
+            Logger.Info($"AssignLovers: カップル {i + 1} - プレイヤー {playerA.PlayerId} と {playerB.PlayerId}");
+            RpcCustomSetLovers(playerA, playerB, LoversIndex, false);
+        }
+
+        Logger.Info("AssignLovers() 終了: Loversのアサイン処理が完了しました。");
+    }
+
+    [CustomRPC]
+    public static void RpcCustomSetLovers(ExPlayerControl playerA, ExPlayerControl playerB, byte loversIndex, bool setNameText)
+    {
+        CustomSetLovers(playerA, playerB, loversIndex, setNameText);
+    }
+    public static LoversCouple CustomSetLovers(ExPlayerControl playerA, ExPlayerControl playerB, byte loversIndex, bool setNameText)
+    {
+        playerA.SetModifierRole(ModifierRoleId.Lovers);
+        playerB.SetModifierRole(ModifierRoleId.Lovers);
+        LoversAbility loversAbilityA = playerA.GetAbility<LoversAbility>();
+        LoversAbility loversAbilityB = playerB.GetAbility<LoversAbility>();
+        LoversCouple loversCouple = new([loversAbilityA, loversAbilityB], loversIndex);
+        loversAbilityA.SetCouple(loversCouple);
+        loversAbilityB.SetCouple(loversCouple);
+        if (setNameText)
+        {
+            NameText.UpdateNameInfo(playerA);
+            NameText.UpdateNameInfo(playerB);
+        }
+        LoversIndex = (byte)(loversIndex + 1);
+        return loversCouple;
+    }
+
+    private static void AssignModifier(PlayerControl player, ModifierRoleId modifierRoleId)
+    {
+        Logger.Info($"AssignModifier: プレイヤー {player.PlayerId} に ModifierRole {modifierRoleId} の割り当て処理を開始します。");
+        ExPlayerControl exPlayer = player;
+
+        // 既存のモディファイアとフラグの状態を確認
+        if (exPlayer.ModifierRole.HasFlag(modifierRoleId))
+        {
+            Logger.Info($"AssignModifier: プレイヤー {player.PlayerId} は既にModifierRole {modifierRoleId} を保持しているため、割り当てをスキップします。");
+            return;
+        }
+
+        Logger.Info($"AssignModifier: プレイヤー {player.PlayerId} にModifierRole {modifierRoleId} を割り当てます。");
+        ModifierRoleId newModifierRole = modifierRoleId;
+        exPlayer.RpcCustomSetModifierRole(newModifierRole);
+        Logger.Info($"AssignModifier: RPCを使用してプレイヤー {player.PlayerId} にModifierRole {modifierRoleId} を適用しました。");
+    }
+}
+public class AssignTickets
+{
+    public RoleOptionManager.RoleOption RoleOption { get; }
+    public int RemainingAssignBeans { get; private set; }
+    public AssignTickets(RoleOptionManager.RoleOption roleOption)
+    {
+        RoleOption = roleOption;
+        RemainingAssignBeans = roleOption.NumberOfCrews;
+    }
+    public void IncrementRemainingAssignBeans()
+    {
+        RemainingAssignBeans--;
+    }
+}

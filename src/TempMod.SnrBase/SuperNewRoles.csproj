@@ -1,0 +1,96 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net6.0</TargetFramework>
+        <Version>0.4.0</Version>
+        <Description>tempMOD SNR foundation</Description>
+        <Authors>ykundesu</Authors>
+        <langVersion>preview</langVersion>
+        <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+        <DebugType>portable</DebugType>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <DefineConstants>$(DefineConstants);STEAM</DefineConstants>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <ApplicationIcon />
+        <Win32Resource />
+        <AssemblyName>TempMod.SnrBase</AssemblyName>
+        <NoWarn>CS0649;CS863;</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <EmbeddedResource Include="Resources\**" />
+        <EmbeddedResource Include="$(PkgSixLabors_ImageSharp)\lib\net6.0\SixLabors.ImageSharp.dll"
+                          LogicalName="SuperNewRoles.Dependencies.SixLabors.ImageSharp.dll" />
+    </ItemGroup>
+
+    <PropertyGroup>
+        <RestoreSources>https://nuget.bepinex.dev/v3/index.json;https://api.nuget.org/v3/index.json</RestoreSources>
+        <SkipGameLaunch>true</SkipGameLaunch>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(Configuration)' != 'Release'">
+        <LibReference Include="$(AmongUs)/BepInEx/core/*.dll" />
+        <LibReference Include="$(AmongUs)/BepInEx/interop/*.dll" />
+        <Reference Include="@(LibReference)" />
+    </ItemGroup>
+    <ItemGroup Condition="'$(Configuration)' == 'Release'">
+        <LibReference Include="$(Build)/core/*.dll" />
+        <LibReference Include="$(Build)/interop/*.dll" />
+        <Reference Include="@(LibReference)" />
+    </ItemGroup>
+
+    <!-- SDKスタイルの既定glob (Compile **/*.cs) からGenerated/を除外し、
+         明示Includeでのみ拾うことで重複(CS2002)を回避する -->
+    <ItemGroup>
+        <Compile Remove="Generated\**" />
+    </ItemGroup>
+    <Target Name="GenerateBuildTime" BeforeTargets="BeforeBuild">
+        <PropertyGroup>
+            <BuildTimeUtc>$([System.DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"))</BuildTimeUtc>
+            <BuildTimeJst>$([System.DateTime]::UtcNow.AddHours(9).ToString("yyyy-MM-ddTHH:mm:ss+09:00"))</BuildTimeJst>
+            <DefineConstants>$(DefineConstants);GENERATED_BUILD_TIME</DefineConstants>
+            <BuildTimeFileContent>#if GENERATED_BUILD_TIME
+namespace SuperNewRoles
+{
+    internal static partial class BuildTimeInfo
+    {
+        public const string BuildTimeUtc = "$(BuildTimeUtc)"%3B
+        public const string BuildTimeJst = "$(BuildTimeJst)"%3B
+    }
+}
+#endif</BuildTimeFileContent>
+        </PropertyGroup>
+        <WriteLinesToFile File="$(MSBuildProjectDirectory)\Generated\BuildTime.g.cs" Overwrite="true" Lines="$(BuildTimeFileContent)" />
+        <ItemGroup>
+            <Compile Include="$(MSBuildProjectDirectory)\Generated\BuildTime.g.cs" />
+        </ItemGroup>
+    </Target>
+
+    <Target Name="CopyCustomContent" AfterTargets="AfterBuild" Condition="'$(Configuration)' == 'Debug' and '$(SkipGameLaunch)' != 'true'">
+        <Message Text="Second occurrence" />
+        <Copy SourceFiles="$(ProjectDir)bin\$(Configuration)\net6.0\TempMod.SnrBase.dll" DestinationFolder="$(AmongUs)/BepInEx/plugins/" />
+        <Exec Command="start &quot;&quot; &quot;$(AmongUs)/Among Us.exe&quot;" />
+        <Exec Command="dotnet test &quot;$(MSBuildProjectDirectory)\..\SuperNewRoles.Tests\SuperNewRoles.Tests.csproj&quot; -c $(Configuration) -p:SkipGameLaunch=true --nologo --verbosity minimal" />
+    </Target>
+
+    <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+        <DefineConstants>DEBUG;TRACE</DefineConstants>
+    </PropertyGroup>
+
+    <ItemGroup>
+    <PackageReference Include="GitInfo" Version="2.0.20">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+        <PackageReference Include="BepInEx.AutoPlugin" Version="1.0.1">
+            <PrivateAssets>all</PrivateAssets>
+            <GeneratePathProperty>false</GeneratePathProperty>
+        </PackageReference>
+        <PackageReference Include="Microsoft.Build" Version="17.12.6" />
+        <PackageReference Include="Microsoft.Build.Framework" Version="17.12.6" />
+        <PackageReference Include="Microsoft.Build.Utilities.Core" Version="17.12.6" />
+        <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" GeneratePathProperty="true" />
+    </ItemGroup>
+    
+</Project>

@@ -1,0 +1,52 @@
+
+using HarmonyLib;
+using SuperNewRoles.Modules;
+using UnityEngine;
+using UnityEngine.Events;
+
+namespace SuperNewRoles.HelpMenus;
+
+[HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
+public static class HelpMenusHudManagerStartPatch
+{
+    public static GameObject helpMenuButton;
+    public static void Postfix(HudManager __instance)
+    {
+        helpMenuButton = AssetManager.Instantiate("HelpButton", __instance.transform);
+        helpMenuButton.transform.localScale = Vector3.one * 0.55f;
+        // ヘルプメニュー自体と被らないように-25
+        var aspectPosition = helpMenuButton.AddComponent<AspectPosition>();
+        aspectPosition.Alignment = AspectPosition.EdgeAlignments.RightTop;
+        aspectPosition.DistanceFromEdge = new(1.25f, 0.48f, -25f);
+        aspectPosition.OnEnable();
+        PassiveButton passiveButton = helpMenuButton.AddComponent<PassiveButton>();
+        passiveButton.Colliders = new Collider2D[] { helpMenuButton.GetComponent<Collider2D>() };
+        passiveButton.OnClick = new();
+        passiveButton.OnMouseOut = new();
+        passiveButton.OnMouseOver = new();
+        passiveButton.OnClick.AddListener((UnityAction)(() =>
+        {
+            if (!HelpMenuObjectManager.IsHelpMenuActive && !HelpMenuObjectManager.CanToggleHelpMenu())
+            {
+                passiveButton.transform.Find("active").gameObject.SetActive(false);
+                return;
+            }
+            passiveButton.transform.Find("active").gameObject.SetActive(true);
+            HelpMenuObjectManager.ShowOrHideHelpMenu();
+        }));
+        passiveButton.OnMouseOut.AddListener((UnityAction)(() =>
+        {
+            if (HelpMenuObjectManager.fadeCoroutine == null || !HelpMenuObjectManager.fadeCoroutine.isActive)
+                passiveButton.transform.Find("active").gameObject.SetActive(false);
+        }));
+        passiveButton.OnMouseOver.AddListener((UnityAction)(() =>
+        {
+            if (!HelpMenuObjectManager.CanToggleHelpMenu())
+            {
+                passiveButton.transform.Find("active").gameObject.SetActive(false);
+                return;
+            }
+            passiveButton.transform.Find("active").gameObject.SetActive(true);
+        }));
+    }
+}

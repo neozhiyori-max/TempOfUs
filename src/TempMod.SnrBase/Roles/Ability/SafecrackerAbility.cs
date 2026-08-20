@@ -1,0 +1,212 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using AmongUs.GameOptions;
+using HarmonyLib;
+using SuperNewRoles.Events;
+using SuperNewRoles.Events.PCEvents;
+using SuperNewRoles.Modules;
+using SuperNewRoles.Roles.Ability.CustomButton;
+using SuperNewRoles.Roles.Neutral;
+using UnityEngine;
+
+namespace SuperNewRoles.Roles.Ability;
+
+public class SafecrackerAbility : AbilityBase
+{
+    public float KillGuardTaskRate { get; }
+    public int MaxKillGuardCount { get; }
+    public float ExiledGuardTaskRate { get; }
+    public int MaxExiledGuardCount { get; }
+    public float UseVentTaskRate { get; }
+    public float UseSaboTaskRate { get; }
+    public float ImpostorLightTaskRate { get; }
+    public float CheckImpostorTaskRate { get; }
+    public bool ChangeTaskPrefab { get; }
+
+    private int _allTaskCount;
+    private int _killGuardCount;
+    private int _exiledGuardCount;
+    private Dictionary<CheckTasks, bool> _unlockedAbilities;
+
+    private TaskOptionData _task;
+
+
+    public enum CheckTasks
+    {
+        KillGuard,
+        ExiledGuard,
+        UseVent,
+        UseSabo,
+        ImpostorLight,
+        CheckImpostor
+    }
+
+    public SafecrackerAbility(
+        float killGuardTaskRate,
+        int maxKillGuardCount,
+        float exiledGuardTaskRate,
+        int maxExiledGuardCount,
+        float useVentTaskRate,
+        float useSaboTaskRate,
+        float impostorLightTaskRate,
+        float checkImpostorTaskRate,
+        bool changeTaskPrefab,
+        TaskOptionData task)
+    {
+        KillGuardTaskRate = killGuardTaskRate;
+        MaxKillGuardCount = maxKillGuardCount;
+        ExiledGuardTaskRate = exiledGuardTaskRate;
+        MaxExiledGuardCount = maxExiledGuardCount;
+        UseVentTaskRate = useVentTaskRate;
+        UseSaboTaskRate = useSaboTaskRate;
+        ImpostorLightTaskRate = impostorLightTaskRate;
+        CheckImpostorTaskRate = checkImpostorTaskRate;
+        ChangeTaskPrefab = changeTaskPrefab;
+
+        _unlockedAbilities = new();
+        _killGuardCount = 0;
+        _exiledGuardCount = 0;
+
+        _task = task;
+    }
+
+    public override void AttachToAlls()
+    {
+        base.AttachToAlls();
+        _allTaskCount = _task.Total;
+        _unlockedAbilities.Clear();
+        _killGuardCount = 0;
+        _exiledGuardCount = 0;
+
+        SubscribeWithAbility(TryKillEvent.Instance, OnTryKill);
+        SubscribeWithAbility(ExileEvent.Instance, OnExile);
+        SubscribeWithAbility(TaskCompleteEvent.Instance, OnTaskComplete);
+        Player.AttachAbility(new CustomTaskAbility(
+            isTaskTrigger: () => true,
+            countsForCrewWin: () => false,
+            taskOptions: () => _task), new AbilityParentAbility(this));
+        Player.AttachAbility(new CustomTaskTypeAbility(TaskTypes.UnlockSafe, ChangeTaskPrefab, MapNames.Airship), new AbilityParentAbility(this));
+        CheckAllAbilities();
+    }
+
+    private int GetTotalTaskCount()
+    {
+        return Player?.Data?.Tasks?.Count ?? 0;
+    }
+
+    private int GetEffectiveTotalTaskCount()
+    {
+        var total = GetTotalTaskCount();
+        return total > 0 ? total : _allTaskCount;
+    }
+
+    private int GetCompletedTaskCount()
+    {
+        return ModHelpers.TaskCompletedData(Player.Player.Data).completed;
+    }
+
+    private bool CheckTaskProgress(CheckTasks taskType, float requiredRate)
+    {
+        if (requiredRate <= 0f) return false;
+        if (_unlockedAbilities.TryGetValue(taskType, out var unlocked) && unlocked) return true;
+
+        var requiredTasks = Mathf.CeilToInt(GetEffectiveTotalTaskCount() * (requiredRate / 100f));
+        if (GetCompletedTaskCount() < requiredTasks) return false;
+
+        _unlockedAbilities[taskType] = true;
+        return true;
+    }
+
+    public bool CanKillGuard() => CheckTaskProgress(CheckTasks.KillGuard, KillGuardTaskRate) && _killGuardCount < MaxKillGuardCount;
+
+    public bool CanExiledGuard() => CheckTaskProgress(CheckTasks.ExiledGuard, ExiledGuardTaskRate) && _exiledGuardCount < MaxExiledGuardCount;
+
+    public bool CanUseVent() => CheckTaskProgress(CheckTasks.UseVent, UseVentTaskRate);
+
+    public bool CanUseSabo() => CheckTaskProgress(CheckTasks.UseSabo, UseSaboTaskRate);
+
+    public bool HasImpostorLight() => CheckTaskProgress(CheckTasks.ImpostorLight, ImpostorLightTaskRate);
+
+    public bool CanCheckImpostor() => CheckTaskProgress(CheckTasks.CheckImpostor, CheckImpostorTaskRate);
+
+    private void OnTaskComplete(TaskCompleteEventData data)
+    {
+        if (data.player != Player) return;
+
+        CheckAllAbilities();
+
+        // すべてのタスクが完了したかチェック
+        if (GetCompletedTaskCount() >= GetEffectiveTotalTaskCount())
+        {
+            // Safecrackerの勝利（ただし生存している場合のみ）
+            if (AmongUsClient.Instance.AmHost && !Player.Data.IsDead)
+            {
+                EndGamer.RpcEndGameWithWinner(Patches.CustomGameOverReason.SafecrackerWin, WinType.SingleNeutral, [Player], Safecracker.Instance.RoleColor, "Safecracker", "WinText");
+            }
+        }
+    }
+
+    // todo
+    private void OnTryKill(TryKillEventData data)
+    {
+        if (data.RefTarget != Player) return;
+
+        if (CanKillGuard())
+        {
+            data.RefSuccess = false;
+            _killGuardCount++;
+            if (data.Killer.AmOwner)
+                ExPlayerControl.LocalPlayer.ResetKillCooldown();
+
+            if (Player.AmOwner)
+            {
+                // TODO: Add translation key
+                HudManager.Instance.ShowPopUp(ModTranslation.GetString("SafecrackerKillGuardActivated"));
+            }
+        }
+    }
+
+    private void OnExile(ExileEventData data)
+    {
+        if (data.exiled != Player) return;
+
+        if (CanExiledGuard())
+        {
+            Player.Player.Revive();
+            RoleManager.Instance.SetRole(Player, RoleTypes.Crewmate);
+            FinalStatusManager.SetFinalStatus(Player, FinalStatus.Alive);
+            Player.Data.IsDead = false;
+            data.RefCanceled = true;
+            _exiledGuardCount++;
+
+            if (Player.AmOwner)
+            {
+                HudManager.Instance.ShowPopUp(ModTranslation.GetString("SafecrackerExiledGuardActivated"));
+            }
+        }
+    }
+
+    private void CheckAllAbilities()
+    {
+        CanKillGuard();
+        CanExiledGuard();
+        if (CanUseVent() && !Player.HasAbility<CustomVentAbility>())
+        {
+            Player.AttachAbility(new CustomVentAbility(() => true), new AbilityParentAbility(this));
+        }
+        if (CanUseSabo() && !Player.HasAbility<CustomSaboAbility>())
+        {
+            Player.AttachAbility(new CustomSaboAbility(() => true), new AbilityParentAbility(this));
+        }
+
+        if (HasImpostorLight() && !Player.HasAbility<ImpostorVisionAbility>())
+        {
+            Player.AttachAbility(new ImpostorVisionAbility(() => HasImpostorLight()), new AbilityParentAbility(this));
+        }
+        if (CanCheckImpostor() && !Player.HasAbility<KnowImpostorAbility>())
+        {
+            Player.AttachAbility(new KnowImpostorAbility(() => CanCheckImpostor()), new AbilityParentAbility(this));
+        }
+    }
+}

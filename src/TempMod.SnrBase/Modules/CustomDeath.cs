@@ -1,0 +1,381 @@
+using System;
+using System.Linq;
+using SuperNewRoles.Events;
+using SuperNewRoles.Events.PCEvents;
+using SuperNewRoles.Mode;
+using SuperNewRoles.WaveCannonObj;
+using UnityEngine;
+using UnityEngine.Rendering;
+
+namespace SuperNewRoles.Modules;
+
+public static class CustomDeathExtensions
+{
+    [CustomRPC]
+    public static void RpcCustomDeath(this ExPlayerControl player, CustomDeathType deathType)
+    {
+        player.CustomDeath(deathType);
+    }
+    [CustomRPC]
+    public static void RpcCustomDeath(this ExPlayerControl source, ExPlayerControl target, CustomDeathType deathType)
+    {
+        CustomDeath(target, deathType, source);
+    }
+    public static void CustomDeath(this ExPlayerControl player, CustomDeathType deathType, ExPlayerControl source = null, bool suppressKillAnimation = false)
+    {
+        string sourceName = source?.Player?.Data?.PlayerName ?? "NoPlayer";
+        string sourceRoleStr = source != null ? source.Role.ToString() : "NoRole";
+        Logger.Info($"[Death] {deathType}: {player.PlayerId}:{player.Player.Data.PlayerName}({player.Role}) killed by {source?.PlayerId ?? -1}:{sourceName}({sourceRoleStr})", "SNR.GameState");
+        switch (deathType)
+        {
+            case CustomDeathType.Exile:
+                player.Player.Exiled();
+                if (ExileEvent.Invoke(player).RefCanceled)
+                    break;
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Exiled);
+                break;
+            case CustomDeathType.FalseCharge:
+                player.Player.Exiled();
+                ExileEvent.Invoke(player);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.FalseCharge);
+                break;
+            case CustomDeathType.Revange:
+                player.Player.Exiled();
+                ExileEvent.Invoke(player);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Revange);
+                break;
+            case CustomDeathType.Kill:
+                if (source == null)
+                    throw new Exception("Source is null");
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                MurderResultFlags resultFlags = GetNormalKillResultFlags(source, player);
+                source.Player.MurderPlayer(player.Player, resultFlags);
+                if (!resultFlags.HasFlag(MurderResultFlags.Succeeded))
+                    break;
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Kill);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.KillWithoutKillAnimation:
+                if (source == null)
+                    throw new Exception("Source is null");
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                if (IsProtectedByGuardianThisRound(player))
+                    break;
+                SpawnDeadBody(source, player);
+                player.Player.Die(DeathReason.Kill, assignGhostRole: true);
+                MurderEvent.Invoke(source, player, MurderResultFlags.Succeeded);
+                ModeManager.OnPlayerDeath(player.Player, source.Player);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Kill);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.KilLWithoutDeadbodyAndTeleport:
+                if (source == null)
+                    throw new Exception("Source is null");
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                Vector2 pos = source.Player.GetTruePosition();
+                MurderResultFlags teleportKillFlags = GetNormalKillResultFlags(source, player);
+                source.Player.MurderPlayer(player.Player, teleportKillFlags);
+                if (!teleportKillFlags.HasFlag(MurderResultFlags.Succeeded))
+                    break;
+                new LateTask(() =>
+                {
+                    DeadBody deadBody = GameObject.FindObjectsOfType<DeadBody>().FirstOrDefault(x => x.ParentId == player.PlayerId);
+                    if (deadBody != null)
+                        GameObject.Destroy(deadBody.gameObject);
+                    source.Player.NetTransform.SnapTo(pos);
+                    source.Player.MyPhysics.body.velocity = Vector2.zero;
+                }, 0.1f);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Kill);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.Suicide:
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Suicide);
+                break;
+            case CustomDeathType.LoversSuicide:
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.LoversSuicide);
+                break;
+            case CustomDeathType.LoversSuicideMurderWithoutDeadbody:
+                player.Player.Exiled();
+                MurderEvent.Invoke(source, player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.LoversSuicide);
+                break;
+            case CustomDeathType.WaveCannon:
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                if (IsProtectedByGuardianThisRound(player))
+                    break;
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.WaveCannon);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.WaveCannonSanta:
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                if (IsProtectedByGuardianThisRound(player))
+                    break;
+                // 被害者視点でのみカスタムキルアニメーションを設定する
+                if (player != null && player.AmOwner)
+                {
+                    CustomKillAnimationManager.SetCurrentCustomKillAnimation(new SantaKillAnimation());
+                }
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.WaveCannon);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.SuperWaveCannon:
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.WaveCannon);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.Samurai:
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                if (IsProtectedByGuardianThisRound(player))
+                    break;
+                var pos2 = player.Player.GetTruePosition();
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                player.Player.NetTransform.SnapTo(pos2);
+                player.Player.MyPhysics.body.velocity = Vector2.zero;
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Samurai);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.BombBySelfBomb:
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                if (IsProtectedByGuardianThisRound(player))
+                    break;
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.BombBySelfBomb);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.SelfBomb:
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.SelfBomb);
+                break;
+            case CustomDeathType.Tuna:
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Tuna);
+                break;
+            case CustomDeathType.Push:
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                player.Player.Exiled();
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Push);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.Ignite:
+                player.Player.Exiled();
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Ignite);
+                break;
+            case CustomDeathType.FalseCharges:
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                MurderResultFlags falseChargesFlags = GetNormalKillResultFlags(source, player);
+                source.Player.MurderPlayer(player.Player, falseChargesFlags);
+                if (!falseChargesFlags.HasFlag(MurderResultFlags.Succeeded))
+                    break;
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.FalseCharges);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.LaunchByRocket:
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                player.Player.Exiled();
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.LaunchByRocket);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.VampireKill:
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                if (IsProtectedByGuardianThisRound(player))
+                    break;
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.VampireKill);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.VampireWithDead:
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.VampireWithDead);
+                break;
+            case CustomDeathType.VampireWithDeadNonDeadbody:
+                player.Player.Exiled();
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.VampireWithDead);
+                break;
+            case CustomDeathType.PenguinAfterMeeting:
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                player.Player.Exiled();
+                MurderEvent.Invoke(source, player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Kill);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.SuicideSecrets:
+                player.Player.Exiled();
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Suicide);
+                break;
+            case CustomDeathType.BuskerFakeDeath:
+                player.Player.Exiled();
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Suicide);
+                break;
+            case CustomDeathType.BansheeWhisper:
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                if (IsProtectedByGuardianThisRound(player))
+                    break;
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.BansheeWhisper);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.HappyGatling:
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                if (IsProtectedByGuardianThisRound(player))
+                    break;
+                // 被害者視点でのみカスタムキルアニメーションを設定する
+                if (player != null && player.AmOwner)
+                {
+                    CustomKillAnimationManager.SetCurrentCustomKillAnimation(new TriggerHappyKillAnimation(source));
+                }
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.HappyGatling);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.SluggerSlug:
+                if (source == null)
+                    throw new Exception("Source is null");
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                player.Player.Exiled();
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.SluggerSlug);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.ConjurerMagic:
+                if (source == null)
+                    throw new Exception("Source is null");
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                if (IsProtectedByGuardianThisRound(player))
+                    break;
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.ConjurerMagic);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.RocketLauncher:
+                if (source == null)
+                    throw new Exception("Source is null");
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                if (IsProtectedByGuardianThisRound(player))
+                    break;
+                if (!suppressKillAnimation && player != null && player.AmOwner && MeetingHud.Instance == null)
+                    CustomKillAnimationManager.SetCurrentCustomKillAnimation(new RocketLauncherKillAnimation());
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.RocketLauncher);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            case CustomDeathType.KnifeKill:
+                if (source == null)
+                    throw new Exception("Source is null");
+                if (!TryKillEvent.Invoke(source, ref player).RefSuccess)
+                    break;
+                if (IsProtectedByGuardianThisRound(player))
+                    break;
+                player.Player.MurderPlayer(player.Player, MurderResultFlags.Succeeded);
+                FinalStatusManager.SetFinalStatus(player, FinalStatus.Kill);
+                MurderDataManager.AddMurderData(source, player);
+                break;
+            default:
+                throw new Exception($"Invalid death type: {deathType}");
+        }
+    }
+
+    private static MurderResultFlags GetNormalKillResultFlags(ExPlayerControl source, ExPlayerControl target)
+    {
+        if (source?.Player == null || target?.Player == null)
+            return MurderResultFlags.FailedError;
+
+        // Preserve the protection state already synchronized by the vanilla game.
+        // Clearing it here would make a protected target look unprotected on every client.
+        return IsProtectedByGuardianThisRound(target)
+            ? MurderResultFlags.FailedProtected
+            : MurderResultFlags.Succeeded;
+    }
+
+    private static bool IsProtectedByGuardianThisRound(ExPlayerControl target)
+    {
+        return target?.Player != null && target.Player.protectedByGuardianThisRound;
+    }
+
+    private static void SpawnDeadBody(ExPlayerControl source, ExPlayerControl target)
+    {
+        DeadBody deadBody = GameObject.Instantiate(GameManager.Instance.GetDeadBody(source.Data.Role));
+        deadBody.ParentId = target.PlayerId;
+        foreach (SpriteRenderer renderer in deadBody.bodyRenderers)
+        {
+            target.Player.SetPlayerMaterialColors(renderer);
+        }
+        target.Player.SetPlayerMaterialColors(deadBody.bloodSplatter);
+
+        Vector3 bodyOffset = Vector3.zero;
+        KillAnimation[] killAnimations = source.Player.KillAnimations;
+        if (killAnimations != null && killAnimations.Length > 0 && killAnimations[0] != null)
+            bodyOffset = killAnimations[0].BodyOffset;
+
+        Vector3 position = target.Player.transform.position + bodyOffset;
+        position.z = position.y / 1000f;
+        deadBody.transform.position = position;
+        source.Data.Role.KillAnimSpecialSetup(deadBody, source.Player, target.Player);
+        target.Data.Role.KillAnimSpecialSetup(deadBody, source.Player, target.Player);
+    }
+
+    public static void Register()
+    {
+        WrapUpEvent.Instance.AddListener(x =>
+        {
+            if (x.exiled == null)
+                return;
+            ExPlayerControl exPlayer = (ExPlayerControl)x.exiled;
+            exPlayer.CustomDeath(CustomDeathType.Exile);
+        });
+    }
+}
+public enum CustomDeathType
+{
+    Exile,
+    Kill,
+    KillWithoutKillAnimation,
+    KnifeKill,
+    Revange,
+    FalseCharge,
+    Suicide,
+    WaveCannon,
+    Samurai,
+    BombBySelfBomb,
+    SelfBomb,
+    Tuna,
+    Push,
+    Ignite,
+    FalseCharges,
+    LoversSuicide,
+    LoversSuicideMurderWithoutDeadbody,
+    LaunchByRocket,
+    VampireKill,
+    VampireWithDead,
+    VampireWithDeadNonDeadbody,
+    KilLWithoutDeadbodyAndTeleport,
+    PenguinAfterMeeting,
+    SuicideSecrets,
+    BuskerFakeDeath,
+    SuperWaveCannon,
+    BansheeWhisper,
+    HappyGatling,
+    SluggerSlug,
+    WaveCannonSanta,
+    ConjurerMagic,
+    RocketLauncher,
+}

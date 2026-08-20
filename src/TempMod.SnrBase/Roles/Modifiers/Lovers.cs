@@ -1,0 +1,233 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using SuperNewRoles.Events;
+using SuperNewRoles.Events.PCEvents;
+using SuperNewRoles.Modules;
+using SuperNewRoles.Roles.Ability;
+using UnityEngine;
+
+namespace SuperNewRoles.Roles.Modifiers;
+
+
+class Lovers : ModifierBase<Lovers>
+{
+    public override ModifierRoleId ModifierRole => ModifierRoleId.Lovers;
+    public override Sprite RoleIcon => AssetManager.GetAsset<Sprite>("LoversRoleIcon.png");
+
+    public override Color32 RoleColor => new(255, 105, 180, byte.MaxValue);
+
+    public override List<Func<AbilityBase>> Abilities => [
+        () => new LoversAbility(LoversKnowPartnerRole, LoversKnowPartnerPosition),
+        // クルー勝利カウントは常に Modifier で上書きし、ラバーズのタスクを含めない。
+        () => new CustomTaskAbility(
+            countsForCrewWin: () => false,
+            priority: AbilityPriority.Modifier),
+        // isTaskTrigger は別 Ability。非単独では役職側 Default より低くし、仕事人等を優先する。
+        () => new CustomTaskAbility(
+            isTaskTrigger: () => false,
+            priority: GetTaskTriggerPriority(LoversWinType))
+    ];
+
+    /// <summary>
+    /// 完全単独以外では役職の CustomTaskAbility（Default）より低くし、
+    /// 仕事人/タスカー/神などの isTaskTrigger を優先する。
+    /// </summary>
+    internal static int GetTaskTriggerPriority(LoversWinType winType)
+        => winType == LoversWinType.Single
+            ? AbilityPriority.Modifier
+            : AbilityPriority.Default - 1;
+
+    public override QuoteMod QuoteMod => QuoteMod.TheOtherRoles;
+
+    public override int? PercentageOption => (int)LoversSpawnChance;
+    public override int? NumberOfCrews => (int)LoversMaxCoupleCount;
+    public override CustomOption[] Options => LoversCategory.Options;
+
+    public override List<AssignedTeamType> AssignedTeams => [];
+
+    public override WinnerTeamType WinnerTeam => WinnerTeamType.Crewmate;
+
+    public override RoleTag[] RoleTags => [];
+
+    public override short IntroNum => 1;
+    public override Func<ExPlayerControl, string> ModifierMark => (_) => "{0}";// (player) => "{0}" + ModHelpers.Cs(player.AmOwner && player.IsAlive() && player.Role != RoleId.God ? RoleColor : player.GetAbility<LoversAbility>().HeartColor, "♥");
+    public override bool HiddenOption => true;
+
+    [Modifier(ModifierRoleId.Lovers)]
+    [AssignFilter([], [RoleId.Truelover, RoleId.LoversBreaker, RoleId.Busker])]
+    public static CustomOptionCategory LoversCategory;
+
+    [CustomOptionInt("LoversMaxCoupleCount", 0, 15, 1, 0, parentFieldName: nameof(LoversCategory))]
+    public static int LoversMaxCoupleCount;
+
+    [CustomOptionInt("LoversSpawnChance", 0, 100, 5, 100, parentFieldName: nameof(LoversCategory))]
+    public static int LoversSpawnChance;
+
+    //クラードと重複しない
+    [CustomOptionBool("LoversAvoidQuarreled", true, parentFieldName: nameof(LoversCategory))]
+    public static bool LoversAvoidQuarreled;
+
+    // 追加勝利
+    [CustomOptionSelect("LoversWinType", typeof(LoversWinType), "LoversWinType.", parentFieldName: nameof(LoversCategory))]
+    public static LoversWinType LoversWinType;
+    // 相方の役職がわかる
+    [CustomOptionBool("LoversKnowPartnerRole", true, parentFieldName: nameof(LoversCategory))]
+    public static bool LoversKnowPartnerRole;
+    // 相方の位置がわかる
+    [CustomOptionBool("LoversKnowPartnerPosition", true, parentFieldName: nameof(LoversCategory))]
+    public static bool LoversKnowPartnerPosition;
+
+    // 抽選にインポスターを含めるかどうか
+    [CustomOptionBool("LoversIncludeImpostorsInSelection", false, parentFieldName: nameof(LoversCategory))]
+    public static bool LoversIncludeImpostorsInSelection;
+    // 抽選に第3陣営を含めるかどうか
+
+    [CustomOptionBool("LoversIncludeThirdTeamInSelection", false, parentFieldName: nameof(LoversCategory))]
+    public static bool LoversIncludeThirdTeamInSelection;
+}
+
+public enum LoversWinType
+{
+    Normal,
+    Shared,
+    Single,
+}
+
+public class LoversAbility : AbilityBase
+{
+    public Color32 HeartColor => couple.HeartColor;
+    public LoversCouple couple { get; private set; }
+    private PlayerArrowsAbility _playerArrowsAbility;
+    private KnowOtherAbility _knowOtherAbility;
+    private bool knowPartnerRole;
+    private bool knowPartnerPosition;
+    public LoversAbility(bool knowPartnerRole, bool knowPartnerPosition)
+    {
+        this.knowPartnerRole = knowPartnerRole;
+        this.knowPartnerPosition = knowPartnerPosition;
+    }
+    public void SetCouple(LoversCouple couple)
+    {
+        this.couple = couple;
+    }
+    public override void AttachToAlls()
+    {
+        SubscribeWithAbility(DieEvent.Instance, OnDie);
+        SubscribeWithAbility(NameTextUpdateEvent.Instance, OnNameTextUpdate);
+        _playerArrowsAbility = new PlayerArrowsAbility(
+            () => !knowPartnerPosition ? Array.Empty<ExPlayerControl>() : couple.lovers.Where(ability => !ability.Player.AmOwner && (ExPlayerControl.LocalPlayer.IsDead() || ability.Player.IsAlive())).Select(ability => ability.Player),
+            (player) => Lovers.Instance.RoleColor
+        );
+        _knowOtherAbility = new KnowOtherAbility(
+            (player) => knowPartnerRole && IsCoupleWith(player), () => true
+        );
+        Player.AttachAbility(_playerArrowsAbility, new AbilityParentAbility(this));
+        Player.AttachAbility(_knowOtherAbility, new AbilityParentAbility(this));
+    }
+    private void OnNameTextUpdate(NameTextUpdateEventData data)
+    {
+        if (data.Player != Player) return;
+        if (!data.Player.IsLovers()) return;
+        bool canSeeHeart = IsCoupleWith(ExPlayerControl.LocalPlayer)
+            || ExPlayerControl.LocalPlayer.CanSeeRoleOf(data.Player)
+            || ExPlayerControl.LocalPlayer.Role == RoleId.God;
+        if (!canSeeHeart) return;
+        if (data.Player.cosmetics.nameText.text.Contains("♥")) return;
+        NameText.AddNameText(data.Player, ModHelpers.Cs(ExPlayerControl.LocalPlayer.IsDead() || ExPlayerControl.LocalPlayer.Role == RoleId.God ? HeartColor : Lovers.Instance.RoleColor, "♥"));
+    }/*
+    private void OnWrapUp(WrapUpEventData data)
+    {
+        if (!Player.AmOwner) return;
+        if (ExPlayerControl.LocalPlayer.IsDead()) return;
+        if (data.exiled == null) return;
+        if (data.exiled.PlayerId == Player.PlayerId) return;
+        if (IsCoupleWith(data.exiled))
+        {
+            ExPlayerControl.LocalPlayer.RpcCustomDeath(CustomDeathType.LoversSuicideMurderWithoutDeadbody);
+        }
+    }*/
+    private void OnDie(DieEventData data)
+    {
+        Logger.Info($"OnDie: {data.player.name}");
+        Logger.Info($"Dead: {ExPlayerControl.LocalPlayer.IsDead()}");
+        if (!Player.AmOwner) return;
+        if (ExPlayerControl.LocalPlayer.IsDead()) return;
+        if (IsCoupleWith(data.player))
+        {
+            // バスカーの偽装死亡中は心中しない
+            var partner = (ExPlayerControl)data.player;
+            if (partner.GetAbility<BuskerPseudocideAbility>()?.isEffectActive == true)
+            {
+                Logger.Info($"Lovers suicide aborted: Partner {data.player.name} is in busker fake death");
+                return;
+            }
+
+            // 相方が実際に死亡しているかを確認する安全チェック
+            // スタントマンなどの防御能力により相方が生存している場合は心中しない
+            if (partner.IsAlive())
+            {
+                Logger.Info($"Lovers suicide aborted: Partner {data.player.name} is still alive");
+                return;
+            }
+
+            if (ExileController.Instance != null)
+                ExPlayerControl.LocalPlayer.RpcCustomDeath(CustomDeathType.LoversSuicideMurderWithoutDeadbody);
+            else
+                ExPlayerControl.LocalPlayer.RpcCustomDeath(CustomDeathType.LoversSuicide);
+        }
+    }
+    public bool IsCoupleWith(ExPlayerControl player)
+    {
+        return couple.lovers.Any(l => l.Player == player);
+    }
+}
+
+public class LoversCouple
+{
+    public Color32 HeartColor { get; set; }
+    public List<LoversAbility> lovers { get; set; } = [];
+    public int loversIndex { get; set; }
+    // カップルの中で一番PlayerIdが低い場合
+    public bool CheckWin(ExPlayerControl player)
+    {
+        return lovers.Min(l => l.Player.PlayerId) == player.PlayerId;
+    }
+    public bool CanSoloWin()
+    {
+        if (lovers == null || lovers.Count == 0)
+            return false;
+
+        return lovers.All(ability => ability?.Player != null && ability.Player.IsAlive())
+            && ExPlayerControl.ExPlayerControls.Count(player => player.IsAlive()) <= lovers.Count + 1;
+    }
+    public static readonly Color32[] LoversHearts = [
+        new(255, 145, 200, byte.MaxValue),
+        new(255, 155, 056, byte.MaxValue),
+        new(169, 084, 255, byte.MaxValue),
+        new(255, 138, 138, byte.MaxValue),
+        new(255, 087, 255, byte.MaxValue),
+        new(059, 195, 059, byte.MaxValue),
+        new(094, 255, 255, byte.MaxValue),
+        new(255, 223, 107, byte.MaxValue),
+        new(054, 154, 255, byte.MaxValue),
+        new(255, 196, 255, byte.MaxValue),
+        new(255, 082, 168, byte.MaxValue),
+        new(099, 099, 255, byte.MaxValue),
+        new(181, 255, 107, byte.MaxValue),
+        new(255, 178, 255, byte.MaxValue)
+    ];
+    private static Color32 OutrangeLoversHeartColor = new(255, 107, 107, byte.MaxValue);
+    public LoversCouple(List<LoversAbility> lovers, int loversIndex)
+    {
+        this.lovers = lovers;
+        this.loversIndex = loversIndex;
+        if (loversIndex >= LoversHearts.Length)
+        {
+            Logger.Warning($"LoversCouple: loversIndexが配列の範囲を超えています: {loversIndex}");
+            HeartColor = OutrangeLoversHeartColor;
+        }
+        else
+            HeartColor = LoversHearts[loversIndex];
+    }
+}

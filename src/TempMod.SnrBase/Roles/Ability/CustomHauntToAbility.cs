@@ -1,0 +1,88 @@
+using System;
+using SuperNewRoles.Events;
+using SuperNewRoles.Modules;
+using UnityEngine;
+
+namespace SuperNewRoles.Roles.Ability;
+
+public class CustomHauntToAbility : AbilityBase
+{
+    private Func<ExPlayerControl> _target;
+    private Vector2 Offset;
+    private bool lastEnabled = false;
+    public CustomHauntToAbility(Func<ExPlayerControl> target)
+    {
+        _target = target;
+
+        Offset = UnityEngine.Random.insideUnitCircle;
+        if (Offset.magnitude < 0.2f)
+        {
+            Offset = Offset.normalized * 0.2f;
+        }
+        else if (Offset.magnitude > 0.5f)
+        {
+            Offset = Offset.normalized * 0.5f;
+        }
+    }
+
+    public override void AttachToLocalPlayer()
+    {
+        base.AttachToLocalPlayer();
+        SubscribeWithAbility(FixedUpdateEvent.Instance, OnFixedUpdate);
+        SubscribeWithAbility(MeetingStartEvent.Instance, OnMeetingStart);
+    }
+
+    public override void DetachToLocalPlayer()
+    {
+        base.DetachToLocalPlayer();
+        ClearLocalHauntMove();
+    }
+
+    private void OnFixedUpdate()
+    {
+        if (MeetingHud.Instance != null || ExileController.Instance != null) return;
+        ExPlayerControl target = _target?.Invoke();
+        if (target == null)
+        {
+            if (lastEnabled)
+                ClearLocalHauntMove();
+            lastEnabled = false;
+            return;
+        }
+        lastEnabled = true;
+        ExPlayerControl.LocalPlayer.Player.moveable = false;
+        Vector2 val = Vector2.zero;
+        Vector2 val2 = target.GetTruePosition() + Offset;
+        Vector2 truePosition = PlayerControl.LocalPlayer.GetTruePosition();
+        Vector2 val3 = PlayerControl.LocalPlayer.MyPhysics.GetVelocity() / PlayerControl.LocalPlayer.MyPhysics.TrueSpeed;
+        Vector2 val4 = val2 - truePosition;
+        float magnitude = val4.magnitude;
+        if (magnitude > 0.05f)
+        {
+            val4 = val4.normalized * Mathf.Clamp(magnitude, 0.75f, 4f);
+            val = val3 * 0.8f + val4 * 0.2f;
+        }
+        else
+        {
+            val *= 0.7f;
+        }
+        PlayerControl.LocalPlayer.MyPhysics.SetNormalizedVelocity(val);
+    }
+    private void OnMeetingStart(MeetingStartEventData _)
+    {
+        ClearLocalHauntMove();
+    }
+
+    private void ClearLocalHauntMove()
+    {
+        var local = ExPlayerControl.LocalPlayer;
+        if (local?.Player == null) return;
+
+        if (lastEnabled)
+            local.Player.moveable = true;
+        if (local.MyPhysics?.body != null)
+            local.MyPhysics.body.velocity = Vector2.zero;
+        local.MyPhysics?.SetNormalizedVelocity(Vector2.zero);
+        lastEnabled = false;
+    }
+}

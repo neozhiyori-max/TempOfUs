@@ -1,0 +1,308 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using UnityEngine;
+using AmongUs.GameOptions;
+using SuperNewRoles.CustomOptions;
+using SuperNewRoles.Roles.Ability;
+using SuperNewRoles.Modules;
+using SuperNewRoles.Events;
+using SuperNewRoles.Events.PCEvents;
+using SuperNewRoles.Roles.Neutral;
+
+namespace SuperNewRoles.Roles.CrewMate;
+
+/// <summary>
+/// データハッカー役職のメインクラス
+/// </summary>
+class Datahacker : RoleBase<Datahacker>
+{
+    public override RoleId Role { get; } = RoleId.Datahacker;
+    public override Color32 RoleColor { get; } = new(157, 236, 255, byte.MaxValue); // 水色
+    public override List<Func<AbilityBase>> Abilities { get; } = [() => new DatahackerAbility(new(
+        UseIndividualTaskSetting: DatahackerUseIndividualTaskSetting,
+        IndividualTasks: DatahackerIndividualTasks,
+        TaskRequirePercent: DatahackerTaskRequirePercent,
+        ExposeTasksLeft: DatahackerExposeTasksLeft,
+        ShowArrowWhenExposed: DatahackerShowArrowWhenExposed,
+        CanSeeDuringMeeting: DatahackerCanSeeDuringMeeting,
+        CanSeeImpostor: DatahackerCanSeeImpostor,
+        CanSeeNeutral: DatahackerCanSeeNeutral,
+        CanSeeKillingNeutral: DatahackerCanSeeKillingNeutral,
+        CanSeeCrew: DatahackerCanSeeCrew,
+        CanSeeMadmates: DatahackerCanSeeMadmates,
+        CanSeeRoleNames: DatahackerCanSeeRoleNames
+    ))];
+    public override QuoteMod QuoteMod { get; } = QuoteMod.SuperNewRoles;
+    public override RoleTypes IntroSoundType { get; } = RoleTypes.Crewmate;
+    public override short IntroNum { get; } = 1;
+
+    public override AssignedTeamType AssignedTeam { get; } = AssignedTeamType.Crewmate;
+    public override WinnerTeamType WinnerTeam { get; } = WinnerTeamType.Crewmate;
+    public override TeamTag TeamTag { get; } = TeamTag.Crewmate;
+    public override RoleTag[] RoleTags { get; } = [RoleTag.Information];
+    public override RoleOptionMenuType OptionTeam { get; } = RoleOptionMenuType.Crewmate;
+
+    // タスクを個別で設定するか
+    [CustomOptionBool("Datahacker.TaskOption", true)]
+    public static bool DatahackerUseIndividualTaskSetting = true;
+
+    [CustomOptionTask("Datahacker.TaskRequirePercent", 4, 4, 4, parentFieldName: nameof(DatahackerUseIndividualTaskSetting))]
+    public static TaskOptionData DatahackerIndividualTasks;
+
+    // 能力が発動するタスク進捗
+    [CustomOptionFloat("Datahacker.TaskRequirePercent", 0f, 100f, 5f, 100f)]
+    public static float DatahackerTaskRequirePercent = 100f;
+
+    // 人外にバレる残りタスク数
+    [CustomOptionInt("Datahacker.ExposeTasksLeft", 0, 20, 1, 2)]
+    public static int DatahackerExposeTasksLeft = 2;
+
+    // バレた際、矢印が表示されるか
+    [CustomOptionBool("Datahacker.ShowArrowWhenExposed", true)]
+    public static bool DatahackerShowArrowWhenExposed = true;
+
+    // 会議時に役職を見れるか
+    [CustomOptionBool("Datahacker.CanSeeDuringMeeting", false)]
+    public static bool DatahackerCanSeeDuringMeeting = false;
+
+    // インポスターがわかる
+    [CustomOptionBool("Datahacker.CanSeeImpostor", true)]
+    public static bool DatahackerCanSeeImpostor = true;
+
+    // 第三陣営がわかる
+    [CustomOptionBool("Datahacker.CanSeeNeutral", false)]
+    public static bool DatahackerCanSeeNeutral = false;
+
+    // キル第三だけがわかる
+    [CustomOptionBool("Datahacker.CanSeeKillingNeutral", true, parentFieldName: nameof(DatahackerCanSeeNeutral))]
+    public static bool DatahackerCanSeeKillingNeutral = true;
+
+    // クルーメイトがわかる
+    [CustomOptionBool("Datahacker.CanSeeCrew", false)]
+    public static bool DatahackerCanSeeCrew = false;
+
+    // マッド系役職がわかる
+    [CustomOptionBool("Datahacker.CanSeeMadmates", false, parentFieldName: nameof(DatahackerCanSeeCrew))]
+    public static bool DatahackerCanSeeMadmates = false;
+
+    // 役職名もわかる
+    [CustomOptionBool("Datahacker.CanSeeRoleNames", false)]
+    public static bool DatahackerCanSeeRoleNames = false;
+}
+
+public record DatahackerData(
+    bool UseIndividualTaskSetting,
+    TaskOptionData IndividualTasks,
+    float TaskRequirePercent,
+    int ExposeTasksLeft,
+    bool ShowArrowWhenExposed,
+    bool CanSeeDuringMeeting,
+    bool CanSeeImpostor,
+    bool CanSeeNeutral,
+    bool CanSeeKillingNeutral,
+    bool CanSeeCrew,
+    bool CanSeeMadmates,
+    bool CanSeeRoleNames);
+
+/// <summary>
+/// データハッカーの能力クラス
+/// </summary>
+public class DatahackerAbility : AbilityBase
+{
+    // 矢印関連
+    private Arrow arrow;
+    private CustomTaskAbility customTaskAbility;
+
+    private bool exposedToImpostors = false;
+    private bool hackingCompleted = false;
+
+    private DatahackerData hackingData;
+
+    public DatahackerAbility(DatahackerData hackingData) : base()
+    {
+        this.hackingData = hackingData;
+    }
+
+    public override void AttachToLocalPlayer()
+    {
+        SubscribeWithAbility(NameTextUpdateVisiableEvent.Instance, (data) => UpdateNameVisible(data));
+    }
+
+    public override void AttachToAlls()
+    {
+        base.AttachToAlls();
+
+        customTaskAbility = new CustomTaskAbility(
+            isTaskTrigger: () => true,
+            countsForCrewWin: () => true,
+            taskOptions: () => hackingData.UseIndividualTaskSetting ? hackingData.IndividualTasks : null);
+        Player.AttachAbility(customTaskAbility, new AbilityParentAbility(this));
+
+        SubscribeWithAbility(TaskCompleteEvent.Instance, (data) => TaskCompleted(data));
+        SubscribeWithAbility(FixedUpdateEvent.Instance, () => UpdateArrow());
+        SubscribeWithAbility(NameTextUpdateEvent.Instance, (data) => UpdateNameText(data));
+
+        RefreshTaskProgress(forceNameUpdate: true);
+    }
+
+    public override void DetachToAlls()
+    {
+        base.DetachToAlls();
+        DestroyArrow();
+        arrow = null;
+        customTaskAbility = null;
+        exposedToImpostors = false;
+        hackingCompleted = false;
+    }
+
+    private void UpdateNameText(NameTextUpdateEventData data)
+    {
+        if (data.Player == Player && !Player.AmOwner && ExPlayerControl.LocalPlayer.IsNonCrewKiller() && exposedToImpostors)
+            NameText.SetNameTextColor(data.Player, Datahacker.Instance.RoleColor);
+        else if (Player.AmOwner && hackingCompleted)
+        {
+            if (MeetingHud.Instance != null && !hackingData.CanSeeDuringMeeting) return;
+            if (CanSeeRole(data.Player, out Color32 color))
+                NameText.SetNameTextColor(data.Player, color);
+        }
+    }
+
+    private void UpdateNameVisible(NameTextUpdateVisiableEventData data)
+    {
+        if (MeetingHud.Instance != null && !hackingData.CanSeeDuringMeeting)
+            return;
+
+        if (Player.AmOwner && hackingCompleted && hackingData.CanSeeRoleNames)
+        {
+            if (CanSeeRole(data.Player, out _))
+                NameText.UpdateVisible(data.Player, data.Player.IsAlive());
+        }
+    }
+
+    /// <summary>
+    /// タスク進捗に応じた発動条件チェック
+    /// </summary>
+    public (bool exposedToImpostors, bool hackingCompleted) CanSeeOtherPlayer()
+    {
+        if (Player.IsDead()) return (false, false);
+        // データハッカーはタスク進捗で能力発動の計算
+        var (taskCompletedCount, totalTasks) = ModHelpers.TaskCompletedData(Player.Data);
+
+        return EvaluateTaskProgress(taskCompletedCount, totalTasks, hackingData.TaskRequirePercent, hackingData.ExposeTasksLeft);
+    }
+
+    internal static (bool exposedToImpostors, bool hackingCompleted) EvaluateTaskProgress(int taskCompletedCount, int totalTasks, float taskRequirePercent, int exposeTasksLeft)
+    {
+        // タスクがない役職から転職した場合は、進捗率100%として扱わず能力を発動させない。
+        if (totalTasks <= 0) return (false, false);
+
+        float progress = (float)taskCompletedCount / totalTasks * 100f;
+        int exposeTaskThreshold = Math.Max(0, (int)Math.Ceiling(totalTasks * taskRequirePercent / 100f) - exposeTasksLeft);
+
+        return (taskCompletedCount >= exposeTaskThreshold, progress >= taskRequirePercent);
+    }
+
+    /// <summary>
+    /// プレイヤー情報の更新処理
+    /// </summary>
+    private void TaskCompleted(TaskCompleteEventData data)
+    {
+        if (data.player != Player) return;
+        RefreshTaskProgress();
+    }
+
+    private void RefreshTaskProgress(bool forceNameUpdate = false)
+    {
+        bool oldhackingCompleted = hackingCompleted;
+        (exposedToImpostors, hackingCompleted) = CanSeeOtherPlayer();
+        if (exposedToImpostors && arrow == null)
+        {
+            EnsureArrow();
+            NameText.UpdateNameInfo(Player);
+        }
+        else if (forceNameUpdate && exposedToImpostors)
+        {
+            NameText.UpdateNameInfo(Player);
+        }
+        if (hackingCompleted && !oldhackingCompleted)
+            NameText.UpdateAllNameInfo();
+        else if (forceNameUpdate && hackingCompleted)
+            NameText.UpdateAllNameInfo();
+    }
+
+    /// <summary>
+    /// 矢印の更新処理
+    /// </summary>
+    private void UpdateArrow()
+    {
+        if (!hackingData.ShowArrowWhenExposed || !ExPlayerControl.LocalPlayer.IsNonCrewKiller() || !exposedToImpostors || Player.IsDead())
+        {
+            if (arrow != null && arrow.arrow != null && arrow.arrow.activeSelf)
+                arrow.arrow.SetActive(false);
+        }
+        else
+        {
+            EnsureArrow();
+            if (arrow?.arrow == null) return;
+            if (!arrow.arrow.activeSelf)
+                arrow.arrow.SetActive(true);
+            arrow.Update(Player.transform.position);
+        }
+    }
+
+    private void EnsureArrow()
+    {
+        if (arrow != null) return;
+        arrow = new Arrow(Datahacker.Instance.RoleColor);
+        arrow.arrow.SetActive(false);
+    }
+
+    private void DestroyArrow()
+    {
+        if (arrow != null && arrow.arrow != null)
+            UnityEngine.Object.Destroy(arrow.arrow);
+    }
+
+    private bool CanSeeRole(ExPlayerControl target, out Color32 color)
+    {
+        color = Color.white;
+        Logger.Info($"CanSeeRole: {target.Data.PlayerName}");
+        if (target.IsNeutral())
+        {
+            if (!hackingData.CanSeeNeutral)
+                return false;
+            Logger.Info("Neutral");
+            color = new(127, 127, 127, byte.MaxValue);
+            return hackingData.CanSeeKillingNeutral ? target.IsKiller() : true;
+        }
+        if (target.IsImpostor())
+        {
+            if (!hackingData.CanSeeImpostor)
+                return false;
+            Logger.Info("Impostor");
+            color = Palette.ImpostorRed;
+            return true;
+        }
+        else
+        {
+            if (!hackingData.CanSeeCrew)
+                return false;
+
+            bool isMadRole = target.IsMadRoles() || target.IsFriendRoles();
+            if (isMadRole)
+            {
+                if (!hackingData.CanSeeMadmates)
+                    return false;
+
+                Logger.Info("Madmates");
+                color = Palette.ImpostorRed;
+                return true;
+            }
+
+            Logger.Info("Crewmate");
+            color = target.Data.Role.TeamColor;
+            return true;
+        }
+    }
+}

@@ -1,0 +1,311 @@
+using System;
+using System.Collections.Generic;
+using AmongUs.GameOptions;
+using Hazel;
+using SuperNewRoles.Events;
+using SuperNewRoles.Events.PCEvents;
+using SuperNewRoles.Modules;
+using SuperNewRoles.Patches;
+using SuperNewRoles.Roles.Ability.CustomButton;
+using SuperNewRoles.Roles.Neutral;
+using UnityEngine;
+
+namespace SuperNewRoles.Roles.Ability;
+
+public class ArsonistData
+{
+    public float DouseCooldown { get; }
+    public float DouseDuration { get; }
+    public bool CanUseVent { get; }
+    public bool IsImpostorVision { get; }
+
+    public ArsonistData(
+        float douseCooldown,
+        float douseDuration,
+        bool canUseVent,
+        bool isImpostorVision)
+    {
+        DouseCooldown = douseCooldown;
+        DouseDuration = douseDuration;
+        CanUseVent = canUseVent;
+        IsImpostorVision = isImpostorVision;
+    }
+}
+
+public class ArsonistAbility : AbilityBase
+{
+    private readonly ArsonistData _data;
+    private HashSet<byte> _dousedPlayers = new();
+    private List<ExPlayerControl> _dousedPlayersControls = new();
+    private DouseButtonAbility _douseAbility;
+    private IgniteButtonAbility _igniteAbility;
+    private CustomVentAbility _ventAbility;
+    private ImpostorVisionAbility _impostorVisionAbility;
+    private ShowPlayerUIAbility _showPlayerUIAbility;
+
+
+    public ArsonistAbility(ArsonistData data)
+    {
+        _data = data;
+    }
+
+    public override void AttachToAlls()
+    {
+        _douseAbility = new DouseButtonAbility(
+            douseCooldown: _data.DouseCooldown,
+            douseDuration: _data.DouseDuration,
+            onDoused: OnPlayerDoused,
+            isDousable: IsDousable
+        );
+        _igniteAbility = new IgniteButtonAbility(
+            canIgnite: CanIgnite
+        );
+        _ventAbility = new CustomVentAbility(
+            canUseVent: () => _data.CanUseVent
+        );
+        _impostorVisionAbility = new ImpostorVisionAbility(
+            hasImpostorVision: () => _data.IsImpostorVision
+        );
+        _showPlayerUIAbility = new ShowPlayerUIAbility(
+            getPlayerList: () => _dousedPlayersControls
+        );
+
+        Player.AddAbility(_douseAbility, new AbilityParentAbility(this));
+        Player.AddAbility(_igniteAbility, new AbilityParentAbility(this));
+        Player.AddAbility(_ventAbility, new AbilityParentAbility(this));
+        Player.AddAbility(_impostorVisionAbility, new AbilityParentAbility(this));
+        Player.AddAbility(_showPlayerUIAbility, new AbilityParentAbility(this));
+
+        SubscribeWithAbility(NameTextUpdateEvent.Instance, OnProgressNameTextUpdate);
+        SubscribeWithAbility(DieEvent.Instance, OnDie);
+    }
+
+    public override void AttachToLocalPlayer()
+    {
+        SubscribeWithAbility(NameTextUpdateEvent.Instance, OnDousedNameTextUpdate);
+    }
+
+    private void OnDousedNameTextUpdate(NameTextUpdateEventData data)
+    {
+        if (!_dousedPlayers.Contains(data.Player.PlayerId)) return;
+        data.Player.cosmetics.nameText.text += ModHelpers.Cs(Arsonist.Instance.RoleColor, " §");
+        if (data.Player.VoteArea != null)
+            data.Player.VoteArea.NameText.text += ModHelpers.Cs(Arsonist.Instance.RoleColor, " §");
+    }
+
+    private void OnProgressNameTextUpdate(NameTextUpdateEventData data)
+    {
+        if (data.Player != Player) return;
+        if (!data.Visible) return;
+        if (ExPlayerControl.LocalPlayer == null || !ExPlayerControl.LocalPlayer.IsDead()) return;
+
+        string progressText = GetDouseProgressText();
+        data.Player.PlayerInfoText.text += progressText;
+        if (data.Player.MeetingInfoText != null)
+            data.Player.MeetingInfoText.text += progressText;
+    }
+
+    private void OnDie(DieEventData data)
+    {
+        if (ExPlayerControl.LocalPlayer == null || !ExPlayerControl.LocalPlayer.IsDead()) return;
+        NameText.UpdateNameInfo(Player);
+    }
+
+    private bool IsDousable(ExPlayerControl target)
+    {
+        return !_dousedPlayers.Contains(target.PlayerId);
+    }
+
+    private void OnPlayerDoused(ExPlayerControl target)
+    {
+        if (!_dousedPlayers.Contains(target.PlayerId))
+            RpcDousePlayer(this, target);
+    }
+
+    private bool CanIgnite()
+    {
+        // 自分以外の生存プレイヤー全員に油がついていたら点火可能
+        foreach (var player in PlayerControl.AllPlayerControls)
+        {
+            if (player == null || player.Data == null) continue;
+            if (player.Data.IsDead) continue;
+            if (player.PlayerId == Player.PlayerId) continue;
+            if (!_dousedPlayers.Contains(player.PlayerId)) return false;
+        }
+        return true;
+    }
+
+    private string GetDouseProgressText()
+    {
+        var (doused, total) = GetDouseProgress();
+        return ModHelpers.Cs(Arsonist.Instance.RoleColor, $"({doused}/{total})");
+    }
+
+    private (int doused, int total) GetDouseProgress()
+    {
+        int doused = _dousedPlayers.Count;
+        int remaining = 0;
+
+        foreach (var player in PlayerControl.AllPlayerControls)
+        {
+            if (player == null || player.Data == null) continue;
+            if (player.Data.IsDead) continue;
+            if (player.PlayerId == Player.PlayerId) continue;
+            if (_dousedPlayers.Contains(player.PlayerId)) continue;
+
+            remaining++;
+        }
+
+        return (doused, doused + remaining);
+    }
+
+    [CustomRPC]
+    public static void RpcDousePlayer(ArsonistAbility source, ExPlayerControl target)
+    {
+        if (source._dousedPlayers.Add(target.PlayerId))
+        {
+            source._dousedPlayersControls.Add(target);
+
+            if (ExPlayerControl.LocalPlayer != null && ExPlayerControl.LocalPlayer.IsDead())
+                NameText.UpdateNameInfo(source.Player);
+            if (source.Player.AmOwner)
+                NameText.UpdateNameInfo(target);
+        }
+    }
+
+    [CustomRPC]
+    public static void RpcIgniteAndWin(ExPlayerControl source)
+    {
+        if (source == null) return;
+
+        if (ShipStatus.Instance != null)
+            ShipStatus.Instance.enabled = false;
+
+        IgniteAll(source);
+
+        if (AmongUsClient.Instance.AmHost)
+        {
+            EndGamer.EndGame(
+                (GameOverReason)CustomGameOverReason.ArsonistWin,
+                WinType.SingleNeutral,
+                [source],
+                Arsonist.Instance.RoleColor,
+                "Arsonist"
+            );
+        }
+    }
+
+    private static void IgniteAll(ExPlayerControl source)
+    {
+        var sourceComponent = source.GetAbility<ArsonistAbility>();
+        if (sourceComponent != null)
+        {
+            foreach (byte playerId in sourceComponent._dousedPlayers)
+            {
+                ExPlayerControl target = ExPlayerControl.ById(playerId);
+                if (target != null && target.IsAlive())
+                {
+                    target.CustomDeath(CustomDeathType.Ignite, source);
+                }
+            }
+        }
+    }
+}
+
+public class DouseButtonAbility : TargetCustomButtonBase, IButtonEffect
+{
+    private readonly float _douseCooldown;
+    private readonly float _douseDuration;
+    private readonly Action<ExPlayerControl> _onDoused;
+    private readonly Func<ExPlayerControl, bool> _isDousable;
+    private ExPlayerControl _currentTarget;
+
+    public bool isEffectActive { get; set; }
+    public Action OnEffectEnds => () => OnDouseEnd();
+    public float EffectDuration => _douseDuration;
+    public bool effectCancellable => false;
+    public float EffectTimer { get; set; }
+
+    public override Color32 OutlineColor => new Color32(255, 102, 0, 255); // オレンジ
+    public override Sprite Sprite => AssetManager.GetAsset<Sprite>("ArsonistDouseButton.png") ?? HudManager.Instance.KillButton.graphic.sprite;
+    public override string buttonText => ModTranslation.GetString("ArsonistDouseButtonText");
+    protected override KeyType keytype => KeyType.Ability1;
+    public override float DefaultTimer => _douseCooldown;
+    public override bool OnlyCrewmates => false;
+    public override bool TargetPlayersInVents => false;
+    public override Func<ExPlayerControl, bool>? IsTargetable => _isDousable;
+
+    public DouseButtonAbility(float douseCooldown, float douseDuration, Action<ExPlayerControl> onDoused, Func<ExPlayerControl, bool> isDousable)
+    {
+        _douseCooldown = douseCooldown;
+        _douseDuration = douseDuration;
+        _onDoused = onDoused;
+        _isDousable = isDousable;
+    }
+
+    public override bool CheckIsAvailable()
+    {
+        return !Player.IsDead() && Target != null;
+    }
+
+    public override void OnClick()
+    {
+        if (Target == null) return;
+        _currentTarget = Target;
+    }
+
+    private void OnDouseEnd()
+    {
+        if (_currentTarget != null && !_currentTarget.IsDead())
+        {
+            _onDoused?.Invoke(_currentTarget);
+        }
+        _currentTarget = null;
+        ResetTimer();
+    }
+
+    public override void OnUpdate()
+    {
+        base.OnUpdate();
+
+        if (isEffectActive && _currentTarget != null)
+        {
+            // 油をかける処理中に目標が移動して範囲外になった場合やプレイヤーが死亡した場合はキャンセル
+            if (_currentTarget.IsDead() || Target != _currentTarget)
+            {
+                isEffectActive = false;
+                EffectTimer = EffectDuration;
+                actionButton.cooldownTimerText.color = Palette.EnabledColor;
+                Timer = 0.0001f;
+                return;
+            }
+        }
+    }
+}
+
+public class IgniteButtonAbility : CustomButtonBase
+{
+    private readonly Func<bool> _canIgnite;
+
+    public override Sprite Sprite => AssetManager.GetAsset<Sprite>("ArsonistIgniteButton.png") ?? HudManager.Instance.KillButton.graphic.sprite;
+    public override string buttonText => ModTranslation.GetString("ArsonistIgniteButtonText");
+    protected override KeyType keytype => KeyType.Ability1;
+    public override float DefaultTimer => 0f;
+
+    public IgniteButtonAbility(Func<bool> canIgnite)
+    {
+        _canIgnite = canIgnite;
+    }
+
+    public override bool CheckIsAvailable()
+    {
+        return !Player.IsDead() && _canIgnite();
+    }
+
+    public override void OnClick()
+    {
+        if (!CheckIsAvailable()) return;
+
+        ArsonistAbility.RpcIgniteAndWin(Player);
+    }
+}

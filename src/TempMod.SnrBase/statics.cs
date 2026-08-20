@@ -1,0 +1,163 @@
+using System.Reflection;
+using BepInEx.Logging;
+using UnityEngine;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+
+namespace SuperNewRoles;
+
+public static class PluginConfig
+{
+    public const string Id = "jp.tempmod.amongus.snrbase";
+    public const string Name = "tempMOD";
+    public const string ProcessName = "Among Us.exe";
+    public const string ModGuid = "f25a7b18-07ad-48c9-963b-fa969ecb1fab";
+}
+
+public static class VersionInfo
+{
+    private static Version _version;
+    public static Version Current => _version ??= SuperNewRolesPlugin.Assembly.GetName().Version;
+    public static string VersionString => Current.ToString() + (SnapShotVersion?.ToString() ?? string.Empty);
+
+    public static bool IsSnapShot => SnapShotVersion != null;
+    public static char? SnapShotVersion = null;
+
+    public static string NewVersion = "";
+    public static bool IsUpdate = false;
+    public static readonly string[] SupportedVanillaVersions = new[] { "2024.3.5" };
+}
+
+public static class SNRURLs
+{
+    public const string ReportInGameAgreement = "https://wiki.supernewroles.com/reporting-in-game-terms";
+    public const string AnalyticsURL = "https://analytics.supernewroles.com/api/v2/";
+    public const string AndroidNoticeCheckURL = "https://raw.githubusercontent.com/SuperNewRoles/Notice/refs/heads/main/notice.txt";
+    public const string SNRCS_JP = "https://cs.supernewroles.com";
+    public const string SNRCS_USEast = "https://cs-useast.supernewroles.com";
+    public const string ReportInGameAPI = "https://reports-api.supernewroles.com/api/v3";
+    public const string UpdateURL = "https://update.supernewroles.com/";
+    public const string GithubAPITags = "https://api.github.com/repos/supernewroles/SuperNewRoles/releases/tags";
+    public const string JoinRoomHost = "joinroom.supernewroles.com";
+    public const string SuperNewAnnounceApi = "https://announce.supernewroles.com/api/v1";
+}
+public static class BranchConfig
+{
+    public const string MasterBranch = "master";
+    public const bool IsSecretBranch = false;
+    public const bool IsHideText = false;
+    public static bool IsBeta => ThisAssembly.Git.Branch != MasterBranch && !IsHideText;
+}
+
+public static class PlatformConfig
+{
+    public const string SteamName = "steam";
+    public const string EpicGamesStoreName = "egs";
+}
+
+public static class UIConfig
+{
+    public static int OptionsPage = 1;
+    public static int OptionsMaxPage = 0;
+    public static string ColorModName = "<color=#55D7FF>temp</color><color=#FFE76A>MOD</color>";
+    public static Sprite ModStamp;
+}
+
+public static class SocialLinks
+{
+    public const string DiscordServer = "https://supernewroles.com/discord";
+    public const string TwitterSnrDevs = "https://twitter.com/SNRDevs";
+    public const string TwitterSnrOfficials = "https://twitter.com/SNROfficials";
+    public const string XSnrOfficials = "https://x.com/SNROfficials";
+}
+
+public static class Statics
+{
+    // MOD情報
+    public const string ModUrl = "neozhiyori-max/TempOfUs";
+    public static string ModName => PluginConfig.Name;
+
+    // バージョン情報
+    public static Version Version => VersionInfo.Current;
+    public static readonly string VersionString = VersionInfo.VersionString;
+    public static string NewVersion = "";
+    public static bool IsUpdate = false;
+
+    // ブランチ設定
+    public const string MasterBranch = "master";
+    public static bool IsBeta = BranchConfig.IsBeta;
+
+    // 開発設定
+    /// <summary>シークレットブランチフラグ - PRでtrueの場合は要確認</summary>
+    public const bool IsSecretBranch = BranchConfig.IsSecretBranch;
+    /// <summary>テキスト非表示フラグ - PRでtrueの場合は要確認</summary>
+    public const bool IsHideText = BranchConfig.IsHideText;
+
+    // アセンブリ
+    private static Assembly _assembly = null;
+    public static Assembly Assembly => _assembly ??= SuperNewRolesPlugin.Assembly;
+
+
+    // プラットフォーム設定
+    public const string SteamName = "steam";
+    public const string EpicGamesStoreName = "egs";
+
+    // バージョン互換性
+    public static readonly string[] SupportVanillaVersion = VersionInfo.SupportedVanillaVersions;
+
+    /// <summary>
+    /// Among Us の <c>Constants.GetBroadcastVersion()</c> と同じ式（InnerSloth の GetVersion）。
+    /// </summary>
+    public static int ComputeAmongUsBroadcastVersion(int year, int month, int day, int revision = 0)
+    {
+        return year * 25000 + month * 1800 + day * 50 + revision;
+    }
+
+    /// <summary>
+    /// オンライン用の DisableServerAuthority フラグ（+25）。revision が既に 25 以上なら加算しない（Reactor 共存時の +50 防止）。
+    /// </summary>
+    public static int ApplyDisableServerAuthorityFlag(int broadcastVersion)
+    {
+        const int flag = 25;
+        int revision = broadcastVersion % 50;
+        if (revision < 0)
+            revision += 50;
+        if (revision < flag)
+            return broadcastVersion + flag;
+        return broadcastVersion;
+    }
+
+    /// <summary>
+    /// 互換とみなす Among Us の <c>GetBroadcastVersion()</c> 値。
+    /// オンラインでは <c>main.cs</c> の Postfix で +25 されるため、その値も列挙する。
+    /// 空の場合は同一数値のみ一致とみなす。
+    /// </summary>
+    public static readonly int[] CompatibleAmongUsBroadcastVersions =
+    {
+        // v17.4
+        ComputeAmongUsBroadcastVersion(2026, 3, 18), // 17.4 (PC)
+        ComputeAmongUsBroadcastVersion(2026, 4, 23), // 17.4 (Android)
+
+        // v17.4 + 25
+        ComputeAmongUsBroadcastVersion(2026, 3, 18) + 25, // 17.4 (PC)
+        ComputeAmongUsBroadcastVersion(2026, 4, 23) + 25, // 17.4 (Android)
+
+        // ComputeAmongUsBroadcastVersion(2024, 8, 10, 0),
+        // ComputeAmongUsBroadcastVersion(2024, 8, 10, 0) + 25,
+    };
+
+    /// <summary>
+    /// ローカルと相手の Among Us バージョン（GetBroadcastVersion）がプレイ可能とみなせるか。
+    /// 同一、または両方とも <see cref="CompatibleAmongUsBroadcastVersions"/> に含まれる場合に true。
+    /// </summary>
+    public static bool AreAmongUsBroadcastVersionsCompatible(int localBroadcast, int remoteBroadcast)
+    {
+        if (localBroadcast == remoteBroadcast) return true;
+        if (CompatibleAmongUsBroadcastVersions == null || CompatibleAmongUsBroadcastVersions.Length == 0)
+            return false;
+        return Array.IndexOf(CompatibleAmongUsBroadcastVersions, localBroadcast) >= 0
+            && Array.IndexOf(CompatibleAmongUsBroadcastVersions, remoteBroadcast) >= 0;
+    }
+}
