@@ -318,11 +318,10 @@ internal sealed class TempModRuntime : IRoleGameGateway
             _ => null,
         };
 
+        // 勧誘可能な対象がいない場合は、ポップアップを出さず静かに失敗する。
+        // 能力ボタンの非点灯と対象射程判定が、使用可能／不可のフィードバックとなる。
         if (ability == AbilityId.RecruitSidekick && targetId is null)
-        {
-            HudManager.Instance?.ShowPopUp("<color=#FF6666>勧誘失敗</color>\n近くに勧誘可能なクルーメイトがいません。");
             return false;
-        }
         if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
             return _engine.TryHandleAbility(new AbilityRequest(actor.PlayerId, ability, targetId, state.Position, Time.time), Time.time);
 
@@ -630,7 +629,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
         {
             Faction.Crew => "#66D9FF",
             Faction.Impostor => "#FF5B5B",
-            _ => "#D98CFF",
+            _ => "#55D7FF",
         };
         var abilityHint = GetAbilityHint(localState.PrimaryRole);
         taskText = $"<color={color}>tempMOD: {definition.DisplayName}{abilityHint}</color>\\n" + taskText;
@@ -1314,17 +1313,8 @@ internal sealed class TempModRuntime : IRoleGameGateway
             var changedPlayer = FindPlayer(changedPlayerId);
             if (changedPlayer != null)
                 EnsureNativeRole(changedPlayer);
-            if (PlayerControl.LocalPlayer != null && _engine.Players.TryGetValue(changedPlayerId, out var changedState))
-            {
-                var promoted = gameEvent.Detail == "SidekickPromotedToJackal";
-                if (gameEvent.ActorId == PlayerControl.LocalPlayer.PlayerId && !promoted)
-                    HudManager.Instance?.ShowPopUp($"<color=#FF6666>陣営勧誘成功</color>\n{changedState.PlayerName} を{RoleCatalog.Get(changedState.PrimaryRole).DisplayName}にしました");
-                else if (PlayerControl.LocalPlayer.PlayerId == changedPlayerId)
-                {
-                    var title = promoted ? "サイドキック昇格" : "陣営勧誘成功";
-                    HudManager.Instance?.ShowPopUp($"<color=#FF6666>{title}</color>\nあなたは{RoleCatalog.Get(changedState.PrimaryRole).DisplayName}になりました");
-                }
-            }
+            // 勧誘・昇格の成功通知はHUDポップアップを出さない。
+            // 役職変更、名前色、ネイティブ役職更新、ホスト同期だけを即時適用する。
         }
         if (_assignmentReceived && AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
             BroadcastReplicatedState();
