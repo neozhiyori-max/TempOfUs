@@ -4,6 +4,7 @@ using Hazel;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
 using TempMod.Core;
+using TempMod.Plugin.UI;
 using TMPro;
 using UnityEngine;
 
@@ -14,6 +15,27 @@ internal enum TempModRpc : byte
     AssignRoles = 250,
     AbilityRequest = 251,
     SyncState = 252,
+}
+
+// 現行Among Usの未知／将来のRPCと250番台が偶発的に衝突しても、payloadを誤読しないための識別子。
+// RPC番号だけではなく、このヘッダーが一致した時だけtempMODのデシリアライズを行う。
+internal static class TempModRpcProtocol
+{
+    internal const byte Magic = 0x54; // 'T'
+    internal const byte Version = 1;
+
+    internal static void WriteHeader(MessageWriter writer)
+    {
+        writer.Write(Magic);
+        writer.Write(Version);
+    }
+
+    internal static bool TryReadHeader(MessageReader reader)
+    {
+        if (reader.BytesRemaining < 2)
+            return false;
+        return reader.ReadByte() == Magic && reader.ReadByte() == Version;
+    }
 }
 
 /// <summary>
@@ -40,6 +62,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
     private bool _freeplayPracticeApplied;
     private bool _freeplayPracticeWaitingLogged;
     private bool _wasInFreeplay;
+    private bool _restoreHudAfterMeeting;
     internal TempModRuntime(ManualLogSource log, TempModSettings settings)
     {
         _log = log;
@@ -129,21 +152,11 @@ internal sealed class TempModRuntime : IRoleGameGateway
         intro.RoleText.color = color;
         intro.RoleBlurbText.text = GetRoleIntroDescription(state.PrimaryRole);
         intro.RoleBlurbText.color = color;
-        intro.TeamTitle.text = factionName;
-        intro.TeamTitle.color = color;
-        intro.ImpostorText.text = factionName;
-        intro.ImpostorText.color = color;
-        if (intro.FrontMost != null)
-            intro.FrontMost.color = color;
-        if (intro.BackgroundBar != null)
-            intro.BackgroundBar.material.color = color;
-        if (intro.Foreground != null)
-            intro.Foreground.material.color = color;
-
-        // ShowRoleコルーチンは後段で標準の「クルー／インポスター」を再設定する。
-        // その影響を受けない専用テキストを同じ位置に重ね、確定したカスタム役職を常に表示する。
-        SetRoleIntroOverlay(intro.RoleText, "tempMOD_CustomRoleIntro", definition.DisplayName, color);
-        SetRoleIntroOverlay(intro.RoleBlurbText, "tempMOD_CustomRoleBlurb", GetRoleIntroDescription(state.PrimaryRole), color);
+        // TeamTitle／ImpostorTextと背景用SpriteRendererはバニラの開始演出が管理する。
+        // これらを上書きすると「インポスター」が二重になり、背景が全面赤で固定されるため触れない。
+        // 旧版が生成した重ね文字も、開始演出中に残らないよう破棄する。
+        RemoveRoleIntroOverlay("tempMOD_CustomRoleIntro");
+        RemoveRoleIntroOverlay("tempMOD_CustomRoleBlurb");
         if (!_introRoleLogged)
         {
             _introRoleLogged = true;
@@ -151,23 +164,11 @@ internal sealed class TempModRuntime : IRoleGameGateway
         }
     }
 
-    private static void SetRoleIntroOverlay(TextMeshPro source, string objectName, string value, Color color)
+    private static void RemoveRoleIntroOverlay(string objectName)
     {
         var overlayObject = GameObject.Find(objectName);
-        if (overlayObject == null)
-        {
-            overlayObject = UnityEngine.Object.Instantiate(source.gameObject, source.transform.parent);
-            overlayObject.name = objectName;
-            overlayObject.transform.localPosition = source.transform.localPosition;
-            overlayObject.transform.localScale = source.transform.localScale;
-        }
-
-        var overlay = overlayObject.GetComponent(Il2CppType.Of<TextMeshPro>()).TryCast<TextMeshPro>();
-        if (overlay == null)
-            return;
-        overlay.text = value;
-        overlay.color = color;
-        overlay.fontSize = source.fontSize;
+        if (overlayObject != null)
+            UnityEngine.Object.Destroy(overlayObject);
     }
 
     internal void OverrideIntroText(TMP_Text target, ref string value)
@@ -196,16 +197,46 @@ internal sealed class TempModRuntime : IRoleGameGateway
     {
         // 会議専用能力を構えたまま閉じても、次の会議へ対象待機状態を持ち越さない。
         _armedMeetingAbility = 0;
+        MeetingAbilityHudPresenter.Reset();
+        _restoreHudAfterMeeting = true;
+
         if (!_assignmentReceived || !_engine.IsMeetingActive)
             return;
 
-        // MeetingHud.RpcCloseは、ゲーム本体が既に追放演出・死亡状態を反映した後に呼ばれる。
-        // RoleEngine側も必ず会議状態を解除しないと、通常HUD・Tick・能力入力が永久に会議中のまま止まる。
+        // RpcClose／Closeのどちらから通知されても安全に会議状態を解除する。
+        // EndMeeting自体はIsMeetingActive=falseなら無操作なので、二重通知で状態を壊さない。
         byte? exiledPlayerId = meetingHud?.exiledPlayer != null ? meetingHud.exiledPlayer.PlayerId : null;
         var isHost = AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost;
         _engine.EndMeeting(exiledPlayerId, Time.time, vanillaExileAlreadyApplied: true, evaluateVictory: isHost);
         if (isHost)
             BroadcastReplicatedState();
+    }
+
+    private void RestorePostMeetingHud(PlayerControl player)
+    {
+        if (!_restoreHudAfterMeeting || PlayerControl.LocalPlayer == null || player.PlayerId != PlayerControl.LocalPlayer.PlayerId)
+            return;
+        // まだ会議HUDが存在する追放・フェード中は本体の演出を邪魔しない。
+        if (MeetingHud.Instance != null)
+            return;
+
+        var hud = HudManager.Instance;
+        if (hud == null)
+            return;
+
+        // 会議終了時にFullScreenの黒フェードが残った場合だけ、標準HUDが戻った時点で透明化する。
+        // 次の本体フェードは通常どおりFullScreenを再有効化して使用できる。
+        if (hud.FullScreen != null)
+        {
+            var overlayColor = hud.FullScreen.color;
+            overlayColor.a = 0f;
+            hud.FullScreen.color = overlayColor;
+            hud.FullScreen.gameObject.SetActive(false);
+        }
+        hud.SetAlertOverlay(false);
+        CustomAbilityHudPresenter.Refresh(hud);
+        _restoreHudAfterMeeting = false;
+        _log.LogDebug("tempMOD: 会議終了後のHUDと暗転オーバーレイを復元しました。");
     }
 
     internal void OnPlayerTick(PlayerControl player)
@@ -222,6 +253,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
             _engine.RegisterPlayer(player.PlayerId, $"Player {player.PlayerId}");
 
         EnsureNativeRole(player);
+        RestorePostMeetingHud(player);
 
         // TownOfUsのUndertakerと同様に、死体を牽引したままベントへ入らせない。
         // ホストだけがBodyStateを変更し、既存DeadBodyを現在位置へ安全に配置する。
@@ -719,6 +751,15 @@ internal sealed class TempModRuntime : IRoleGameGateway
         if (callId is not ((byte)TempModRpc.AssignRoles) and not ((byte)TempModRpc.AbilityRequest) and not ((byte)TempModRpc.SyncState))
             return false;
 
+        // RPC番号だけが一致してもpayload識別子が異なるなら、Among Us本体または別MODの通信である。
+        // 読み取り位置を戻して本体へ渡すことで、誤読による状態破壊・暗転残留を防ぐ。
+        var originalPosition = reader.Position;
+        if (!TempModRpcProtocol.TryReadHeader(reader))
+        {
+            reader.Position = originalPosition;
+            return false;
+        }
+
         try
         {
             if (callId == (byte)TempModRpc.AssignRoles)
@@ -746,6 +787,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
             (byte)TempModRpc.AbilityRequest,
             SendOption.Reliable,
             -1);
+        TempModRpcProtocol.WriteHeader(writer);
         writer.Write(sender.PlayerId);
         writer.Write((byte)ability);
         writer.Write(targetId);
@@ -787,6 +829,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
             (byte)TempModRpc.SyncState,
             SendOption.Reliable,
             -1);
+        TempModRpcProtocol.WriteHeader(writer);
         writer.Write((byte)_engine.Players.Count);
         foreach (var player in _engine.Players.Values)
         {
@@ -997,6 +1040,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
         _omniscienceShown = false;
         _roleDescriptionChatShown = false;
         _armedMeetingAbility = 0;
+        _restoreHudAfterMeeting = false;
     }
 
     private void TryApplyFreeplayPracticeAssignment()
@@ -1055,6 +1099,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
             (byte)TempModRpc.AssignRoles,
             SendOption.Reliable,
             -1);
+        TempModRpcProtocol.WriteHeader(writer);
         WriteAssignment(writer, assignment);
         AmongUsClient.Instance.FinishRpcImmediately(writer);
         BroadcastReplicatedState();

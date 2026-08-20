@@ -13,6 +13,7 @@ var tests = new (string Name, Action Run)[]
     ("シェリフのキル回数上限を守る", SheriffKillLimit),
     ("シェリフは設定で第三陣営をキルできない", SheriffCannotKillNeutralWhenDisabled),
     ("1人でも役職抽選できる", SinglePlayerAssignment),
+    ("インポスター人数を0に設定できる", ZeroImpostorAssignmentIsRespected),
     ("陣営別人数上限を守る", FactionRoleLimitsAreRespected),
     ("クリーナーは死体を清掃できる", CleanerRemovesBody),
     ("アンダーテイカーは死体を牽引・配置できる", UndertakerCarriesAndDropsBody),
@@ -223,8 +224,21 @@ static void SinglePlayerAssignment()
     Assert(assignment.LoversPairs.Count == 0);
 }
 
-    static void FactionRoleLimitsAreRespected()
+static void ZeroImpostorAssignmentIsRespected()
+{
+    var assignment = RoleAssignmentPlanner.Create(new byte[] { 1, 2, 3, 4 }, new RoleAssignmentOptions
     {
+        ImpostorCount = 0,
+        CrewRoleCount = 0,
+        NeutralRoleCount = 0,
+        EnableLovers = false,
+    }, new Random(7));
+
+    Assert(assignment.PrimaryRoles.Values.All(role => RoleCatalog.GetFaction(role) != Faction.Impostor));
+}
+
+static void FactionRoleLimitsAreRespected()
+{
         var assignment = RoleAssignmentPlanner.Create(new byte[] { 1, 2, 3, 4, 5, 6 }, new RoleAssignmentOptions
         {
             ImpostorCount = 1,

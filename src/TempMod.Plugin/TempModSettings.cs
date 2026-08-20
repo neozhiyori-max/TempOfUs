@@ -55,7 +55,7 @@ internal sealed class TempModSettings
     internal TempModSettings(ConfigFile config)
     {
         _config = config;
-        ImpostorCount = config.Bind("陣営別人数", "インポスター人数", 2, "インポスター役職を配布する人数上限です。1～15。");
+        ImpostorCount = config.Bind("陣営別人数", "インポスター人数", 2, "インポスター役職を配布する人数上限です。0～15。");
         CrewRoleCount = config.Bind("陣営別人数", "クルー人数", 10, "クルー役職を配布する人数上限です。0～15。");
         NeutralRoleCount = config.Bind("陣営別人数", "第三陣営人数", 1, "第三陣営役職を配布する人数上限です。0～15。");
         EnableLovers = config.Bind("第三陣営: ラバーズ", "ラバーズを有効化", true, "有効時、2人以上のゲームでランダムな2名をラバーズにします。");
@@ -212,7 +212,7 @@ internal sealed class TempModSettings
                 CrewRoleCount.Value = Math.Clamp(CrewRoleCount.Value + delta, 0, 15);
                 break;
             case Faction.Impostor:
-                ImpostorCount.Value = Math.Clamp(ImpostorCount.Value + delta, 1, 15);
+                ImpostorCount.Value = Math.Clamp(ImpostorCount.Value + delta, 0, 15);
                 break;
             default:
                 NeutralRoleCount.Value = Math.Clamp(NeutralRoleCount.Value + delta, 0, 15);
@@ -296,7 +296,7 @@ internal sealed class TempModSettings
     {
         return new RoleAssignmentOptions
         {
-            ImpostorCount = Math.Clamp(ImpostorCount.Value, 1, 15),
+            ImpostorCount = Math.Clamp(ImpostorCount.Value, 0, 15),
             CrewRoleCount = Math.Clamp(CrewRoleCount.Value, 0, 15),
             NeutralRoleCount = Math.Clamp(NeutralRoleCount.Value, 0, 15),
             EnableLovers = EnableLovers.Value,

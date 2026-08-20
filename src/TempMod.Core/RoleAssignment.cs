@@ -46,7 +46,8 @@ public static class RoleAssignmentPlanner
             throw new ArgumentException("プレイヤーIDは重複できません。", nameof(playerIds));
 
         var shuffledPlayers = playerIds.OrderBy(_ => random.Next()).ToList();
-        var impostorCount = Math.Clamp(options.ImpostorCount, 1, Math.Max(1, playerIds.Count - 1));
+        // 役職設定でインポスター人数を0にした場合は、強制的にインポスター枠を作らない。
+        var impostorCount = Math.Clamp(options.ImpostorCount, 0, Math.Max(0, playerIds.Count - 1));
         var impostorSlots = shuffledPlayers.Take(impostorCount).ToList();
         var crewSlots = shuffledPlayers.Skip(impostorCount).ToList();
         var result = playerIds.ToDictionary(id => id, _ => RoleId.Crewmate);

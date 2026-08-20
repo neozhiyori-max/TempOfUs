@@ -168,6 +168,18 @@ internal static class MeetingHudRpcClosePatch
     }
 }
 
+// 現行Steam版ではオンライン会議の終了経路がCloseへ到達する場合がある。
+// RpcCloseだけに依存せず、どちらの経路でもRoleEngineと会議専用UIを復元する。
+[HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Close))]
+internal static class MeetingHudClosePatch
+{
+    private static void Postfix(MeetingHud __instance)
+    {
+        MadGuesserMeetingPresenter.CloseRoleList();
+        TempModPlugin.Runtime.OnMeetingClosed(__instance);
+    }
+}
+
 [HarmonyPatch(typeof(TaskPanelBehaviour), nameof(TaskPanelBehaviour.SetTaskText))]
 internal static class TaskPanelBehaviourSetTaskTextPatch
 {

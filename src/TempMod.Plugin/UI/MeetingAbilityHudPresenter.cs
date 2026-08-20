@@ -41,6 +41,15 @@ internal static class MeetingAbilityHudPresenter
             button.SetDisabled();
     }
 
+    /// <summary>会議終了時に静的参照と可視状態を破棄し、次の通常HUDへ持ち越さない。</summary>
+    internal static void Reset()
+    {
+        if (_meetingButton != null)
+            _meetingButton.ToggleVisible(false);
+        _meetingButton = null;
+        _visible = false;
+    }
+
     internal static bool TryHandleClick(AbilityButton button)
     {
         if (!_visible || _meetingButton == null || button != _meetingButton)
