@@ -52,10 +52,10 @@ internal sealed class TempModRuntime : IRoleGameGateway
     private readonly HashSet<byte> _nativeRolesApplied = new();
     private readonly HashSet<byte> _movementFrozenByTempMod = new();
     private readonly HashSet<byte> _morphVisualsApplied = new();
+    private readonly HashSet<byte> _godRoleLabelsApplied = new();
     private readonly List<ResultLine> _resultLines = new();
     private string? _victoryLabel;
     private bool _resultSentToChat;
-    private bool _omniscienceShown;
     private AbilityId _armedMeetingAbility;
         private RoleId _meetingGuessRole = RoleId.Sheriff;
     private bool _roleDescriptionChatShown;
@@ -63,6 +63,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
     private bool _freeplayPracticeWaitingLogged;
     private bool _wasInFreeplay;
     private bool _restoreHudAfterMeeting;
+    private float _forceMeetingRecoveryAt = -1f;
     internal TempModRuntime(ManualLogSource log, TempModSettings settings)
     {
         _log = log;
@@ -133,13 +134,15 @@ internal sealed class TempModRuntime : IRoleGameGateway
             return;
 
         var definition = RoleCatalog.Get(state.PrimaryRole);
-        var color = definition.Faction switch
-        {
-            Faction.Crew => new Color(0.40f, 0.85f, 1.00f),
-            Faction.Impostor => new Color(1.00f, 0.36f, 0.36f),
-            // 第三陣営はインポスター赤と区別する水色で統一する。
-            _ => new Color(0.33f, 0.84f, 1.00f),
-        };
+        var color = state.PrimaryRole == RoleId.God
+            ? new Color(1.00f, 0.84f, 0.20f)
+            : definition.Faction switch
+            {
+                Faction.Crew => new Color(0.40f, 0.85f, 1.00f),
+                Faction.Impostor => new Color(1.00f, 0.36f, 0.36f),
+                // 第三陣営はインポスター赤と区別する水色で統一する。
+                _ => new Color(0.33f, 0.84f, 1.00f),
+            };
         var factionName = definition.Faction switch
         {
             Faction.Crew => "クルー",
@@ -189,6 +192,8 @@ internal sealed class TempModRuntime : IRoleGameGateway
 
     internal void OnMeetingStarted()
     {
+        _restoreHudAfterMeeting = false;
+        _forceMeetingRecoveryAt = -1f;
         if (_assignmentReceived)
             _engine.StartMeeting(Time.time);
     }
@@ -199,6 +204,9 @@ internal sealed class TempModRuntime : IRoleGameGateway
         _armedMeetingAbility = 0;
         MeetingAbilityHudPresenter.Reset();
         _restoreHudAfterMeeting = true;
+        // バニラの追放・フェード演出を十分待った後もMeetingHudが残る場合だけ、強制復旧する。
+        _forceMeetingRecoveryAt = Time.time + 8f;
+        _log.LogInfo("tempMOD: 会議終了を検出し、通常HUDの復元を予約しました。");
 
         if (!_assignmentReceived || !_engine.IsMeetingActive)
             return;
@@ -216,9 +224,18 @@ internal sealed class TempModRuntime : IRoleGameGateway
     {
         if (!_restoreHudAfterMeeting || PlayerControl.LocalPlayer == null || player.PlayerId != PlayerControl.LocalPlayer.PlayerId)
             return;
-        // まだ会議HUDが存在する追放・フェード中は本体の演出を邪魔しない。
-        if (MeetingHud.Instance != null)
+        // 追放・フェード演出中は本体の会議HUDを維持する。ただし無効化済みの古いInstanceは待機条件にしない。
+        var meetingHud = MeetingHud.Instance;
+        if (meetingHud != null && meetingHud.gameObject.activeInHierarchy && Time.time < _forceMeetingRecoveryAt)
             return;
+
+        // 8秒を超えても会議HUDが有効なままなら、終了遷移が滞留している。
+        // 通常HUDを永久に奪われないよう、会議UIだけを無効化して安全に復帰する。
+        if (meetingHud != null && meetingHud.gameObject.activeInHierarchy)
+        {
+            _log.LogWarning("tempMOD: 会議HUDの終了遷移が8秒以上滞留したため、通常HUDを強制復旧します。");
+            meetingHud.gameObject.SetActive(false);
+        }
 
         var hud = HudManager.Instance;
         if (hud == null)
@@ -234,26 +251,30 @@ internal sealed class TempModRuntime : IRoleGameGateway
             hud.FullScreen.gameObject.SetActive(false);
         }
         hud.SetAlertOverlay(false);
+        hud.SetHudActive(true);
         CustomAbilityHudPresenter.Refresh(hud);
         _restoreHudAfterMeeting = false;
-        _log.LogDebug("tempMOD: 会議終了後のHUDと暗転オーバーレイを復元しました。");
+        _forceMeetingRecoveryAt = -1f;
+        _log.LogInfo("tempMOD: 会議終了後のHUDと暗転オーバーレイを復元しました。");
     }
 
     internal void OnPlayerTick(PlayerControl player)
     {
+        if (player == null)
+            return;
+        RestorePostMeetingHud(player);
         if (IsFreeplayMode())
         {
             _wasInFreeplay = true;
             TryApplyFreeplayPracticeAssignment();
         }
-        if (!_assignmentReceived || player == null || player.Data == null || player.Data.IsDead)
+        if (!_assignmentReceived || player.Data == null || player.Data.IsDead)
             return;
 
         if (!_engine.Players.ContainsKey(player.PlayerId))
             _engine.RegisterPlayer(player.PlayerId, $"Player {player.PlayerId}");
 
         EnsureNativeRole(player);
-        RestorePostMeetingHud(player);
 
         // TownOfUsのUndertakerと同様に、死体を牽引したままベントへ入らせない。
         // ホストだけがBodyStateを変更し、既存DeadBodyを現在位置へ安全に配置する。
@@ -292,9 +313,9 @@ internal sealed class TempModRuntime : IRoleGameGateway
             // SuperNewRolesのKnowOtherAbilityと同じ目的で、ジャッカル／サイドキック間だけ名前を赤く表示する。
             // 会議・役職同期・本体の表示更新で色が戻るため、ローカル視点の確定状態に基づき毎フレーム再適用する。
             ApplyJackalTeamNameColors();
+            ApplyGodRoleLabels();
             ApplyMorphVisuals();
             ShowRoleDescriptionChatIfNeeded(player);
-            ShowOmniscienceIfNeeded(player);
             if (Input.GetKeyDown(KeyCode.F))
                 TryUsePrimaryAbility(player);
         }
@@ -504,7 +525,6 @@ internal sealed class TempModRuntime : IRoleGameGateway
             AbilityId.AnimateBody => "死体操縦",
             AbilityId.LinkCurse => "呪詛リンク",
             AbilityId.AlchemyStealth => "錬金ステルス",
-            AbilityId.Omniscience => "全知",
             AbilityId.RecruitSidekick => "陣営勧誘",
             AbilityId.AlignFaction => "陣営同調",
             AbilityId.InfectKill => "感染キル",
@@ -579,7 +599,8 @@ internal sealed class TempModRuntime : IRoleGameGateway
         RoleId.Necromancer => AbilityId.AnimateBody,
         RoleId.Witch => AbilityId.LinkCurse,
         RoleId.Alchemist => AbilityId.AlchemyStealth,
-        RoleId.God => AbilityId.Omniscience,
+        // 神は全知ボタンを持たず、名前の下に全役職を常時表示する受動能力を持つ。
+        RoleId.God => (AbilityId)0,
         RoleId.Jackal => AbilityId.RecruitSidekick,
         RoleId.SchrodingerCat => AbilityId.AlignFaction,
         RoleId.Zombie => AbilityId.InfectKill,
@@ -724,7 +745,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
             RoleId.Necromancer => "  [F: 死体操縦]",
             RoleId.Witch => "  [F: 呪詛リンク]",
             RoleId.Alchemist => "  [F: 錬金ステルス]",
-            RoleId.God => "  [F: 全知]",
+            RoleId.God => "  [常時: 全役職表示]",
             RoleId.Jackal => "  [F: キル／陣営勧誘]",
             RoleId.SchrodingerCat => "  [F: 陣営同調]",
             RoleId.Zombie => "  [F: 感染キル]",
@@ -977,6 +998,54 @@ internal sealed class TempModRuntime : IRoleGameGateway
         }
     }
 
+    /// <summary>
+    /// 神のローカル視点では、全プレイヤーの表示名の下に同期済み役職名を常時表示する。
+    /// PlayerControlを複製せず、既存のCosmetics.nameTextだけを毎フレーム再適用する。
+    /// </summary>
+    private void ApplyGodRoleLabels()
+    {
+        var localPlayer = PlayerControl.LocalPlayer;
+        var localIsGod = localPlayer != null && _engine.Players.TryGetValue(localPlayer.PlayerId, out var localState) && localState.PrimaryRole == RoleId.God;
+        var allPlayers = PlayerControl.AllPlayerControls;
+
+        if (!localIsGod)
+        {
+            foreach (var playerId in _godRoleLabelsApplied.ToArray())
+            {
+                var player = FindPlayer(playerId);
+                if (player?.cosmetics?.nameText != null && player.Data != null)
+                {
+                    player.cosmetics.nameText.text = player.Data.PlayerName;
+                    player.cosmetics.nameText.color = Color.white;
+                }
+            }
+            _godRoleLabelsApplied.Clear();
+            return;
+        }
+
+        for (var index = 0; index < allPlayers.Count; index++)
+        {
+            var player = allPlayers[index];
+            if (player?.cosmetics?.nameText == null || player.Data == null || !_engine.Players.TryGetValue(player.PlayerId, out var state))
+                continue;
+
+            var role = RoleCatalog.Get(state.PrimaryRole);
+            var roleColor = state.PrimaryRole == RoleId.God
+                ? "#FFE76A"
+                : role.Faction switch
+                {
+                    Faction.Impostor => "#FF6666",
+                    Faction.Crew => "#66D9FF",
+                    _ => "#55D7FF",
+                };
+            player.cosmetics.nameText.text = $"{player.Data.PlayerName}\n<size=62%><color={roleColor}>{role.DisplayName}</color></size>";
+            player.cosmetics.nameText.color = player.PlayerId == localPlayer!.PlayerId
+                ? new Color(1.00f, 0.84f, 0.20f)
+                : Color.white;
+            _godRoleLabelsApplied.Add(player.PlayerId);
+        }
+    }
+
     private byte? FindNearestLivingPlayer(byte actorId)
     {
         if (!_engine.Players.TryGetValue(actorId, out var actor))
@@ -1033,14 +1102,15 @@ internal sealed class TempModRuntime : IRoleGameGateway
         _nativeRolesApplied.Clear();
         _movementFrozenByTempMod.Clear();
         _morphVisualsApplied.Clear();
+        _godRoleLabelsApplied.Clear();
         _resultLines.Clear();
         _victoryLabel = null;
         _resultSentToChat = false;
         _introRoleLogged = false;
-        _omniscienceShown = false;
         _roleDescriptionChatShown = false;
         _armedMeetingAbility = 0;
         _restoreHudAfterMeeting = false;
+        _forceMeetingRecoveryAt = -1f;
     }
 
     private void TryApplyFreeplayPracticeAssignment()
@@ -1186,29 +1256,17 @@ internal sealed class TempModRuntime : IRoleGameGateway
             return;
 
         var definition = RoleCatalog.Get(state.PrimaryRole);
-        var color = definition.Faction switch
-        {
-            Faction.Crew => "#55D7FF",
-            Faction.Impostor => "#FF6666",
-            _ => "#D890FF",
-        };
+        var color = state.PrimaryRole == RoleId.God
+            ? "#FFE76A"
+            : definition.Faction switch
+            {
+                Faction.Crew => "#55D7FF",
+                Faction.Impostor => "#FF6666",
+                _ => "#55D7FF",
+            };
         var title = $"<color={color}>【あなたの役職: {definition.DisplayName}】</color>";
         HudManager.Instance.Chat.AddChat(localPlayer, title + "\n" + RoleDescriptionCatalog.Get(state.PrimaryRole), false);
         _roleDescriptionChatShown = true;
-    }
-
-    private void ShowOmniscienceIfNeeded(PlayerControl localPlayer)
-    {
-        if (_omniscienceShown || !_engine.Players.TryGetValue(localPlayer.PlayerId, out var localState) || localState.PrimaryRole != RoleId.God)
-            return;
-        if (!localState.EffectExpiresAt.ContainsKey(AbilityId.Omniscience))
-            return;
-
-        var lines = _engine.Players.Values
-            .OrderBy(player => player.PlayerId)
-            .Select(player => $"{player.PlayerName}: {RoleCatalog.Get(player.PrimaryRole).DisplayName}");
-        HudManager.Instance?.ShowPopUp("<color=#FFE76A>全知</color>\n" + string.Join("\n", lines));
-        _omniscienceShown = true;
     }
 
     /// <summary>
