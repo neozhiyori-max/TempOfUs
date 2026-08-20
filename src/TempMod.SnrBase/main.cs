@@ -106,15 +106,17 @@ public partial class SuperNewRolesPlugin : BasePlugin
         CustomRoleManager.Load();
         CustomOptionManager.Load();
 
-        // SNRの設定プリファブ・アイコン・画像バンドルは使用しない。
-        // tempMOD独自の設定画面パッチだけを適用する。
-        // 役職抽選、会議、能力、カスタムRPC、サーバ・外部通信関連のパッチは適用しない。
+        // SNRの実績ある設定UIだけを元の構成で復元する。
+        // 役職抽選、会議、能力、カスタムRPC、サーバ・外部通信関連のパッチは引き続き未有効。
+        AssetManager.Load();
+        ModTranslation.Load();
         Harmony.CreateClassProcessor(typeof(TitleLogoPresenter.MainMenuManagerStartPatch)).Patch();
-        Harmony.CreateClassProcessor(typeof(TempModRoleSettingsPresenter.GameSettingMenuStartPatch)).Patch();
-        Harmony.CreateClassProcessor(typeof(TempModRoleSettingsPresenter.GameSettingMenuClosePatch)).Patch();
+        Harmony.CreateClassProcessor(typeof(RoleOptionMenu.RoleOptionMenuStartPatch)).Patch();
+        Harmony.CreateClassProcessor(typeof(RoleOptionMenu.RoleOptionMenuClosePatch)).Patch();
+        Harmony.CreateClassProcessor(typeof(RoleOptionMenu.RoleOptionMenuLateUpdatePatch)).Patch();
 
         Logger.LogInfo("tempMOD SNR foundation 0.4.0 を読み込みました。");
-        Logger.LogInfo("SNR由来の5役職とtempMOD独自設定UIを登録しました。同期・会議・能力パッチは未有効です。");
+        Logger.LogInfo("SNR標準の設定UIへ復帰しました。第1波の5役職だけを登録しています。同期・会議・能力パッチは未有効です。");
     }
 
     private static void LoadAnnouncementImageDecoder()
