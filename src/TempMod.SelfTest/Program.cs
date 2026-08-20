@@ -37,6 +37,7 @@ var tests = new (string Name, Action Run)[]
     ("ゾンビはクルーを子ゾンビに感染できる", ZombieInfectsCrew),
     ("ハゲタカの死体回収数は時間経過後も残る", VultureCollectionCountPersists),
     ("SNR版ハゲタカは必要死体数到達で即座に単独勝利する", VultureWinsImmediatelyAtConfiguredBodyCount),
+    ("神は生存したまま全タスク完了時に一度だけ単独勝利する", GodWinsOnceWhenAliveAndTasksComplete),
     ("SNR版シュレディンガーの猫はインポスターに攻撃されると死亡せず同調する", SchrodingerCatAlignsWithImpostorKiller),
     ("SNR版シュレディンガーの猫はジャッカルに攻撃されるとサイドキックへ同調する", SchrodingerCatAlignsWithJackalKiller),
     ("マッドゲッサーは会議中の正解で対象をキルできる", MadGuesserKillsCorrectRole),
@@ -520,7 +521,7 @@ static void VultureWinsImmediatelyAtConfiguredBodyCount()
         VultureRequiredBodies = 1,
         KillDistance = 3f,
     });
-    for (byte playerId = 1; playerId <= 3; playerId++)
+    for (byte playerId = 1; playerId <= 4; playerId++)
     {
         engine.RegisterPlayer(playerId, $"P{playerId}");
         engine.UpdatePosition(playerId, new Position(playerId, 0), 1);
@@ -528,10 +529,23 @@ static void VultureWinsImmediatelyAtConfiguredBodyCount()
     engine.AssignRole(1, RoleId.Vulture);
     engine.AssignRole(2, RoleId.Crewmate);
     engine.AssignRole(3, RoleId.Impostor);
+    engine.AssignRole(4, RoleId.Crewmate);
     Assert(engine.TryHandleAbility(new AbilityRequest(3, AbilityId.Kill, 2, null, 2), 2));
     Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.CollectBody, 2, null, 3), 3));
     Assert(gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.Victory && gameEvent.ParticipantIds?.Contains((byte)1) == true));
     Assert(engine.Players[1].AbilityCooldowns.TryGetValue(AbilityId.CollectBody, out var cooldown) && cooldown == 15f);
+}
+
+static void GodWinsOnceWhenAliveAndTasksComplete()
+{
+    var (engine, gateway) = CreateEngine();
+    engine.AssignRole(1, RoleId.God);
+    Assert(engine.TryDeclareGodTaskVictory(1, 2));
+    Assert(engine.TryDeclareGodTaskVictory(1, 3));
+    var victories = gateway.Events.Where(gameEvent => gameEvent.Kind == GameEventKind.Victory).ToArray();
+    Assert(victories.Length == 1);
+    Assert(victories[0].Detail == nameof(VictoryKind.God));
+    Assert(victories[0].ParticipantIds?.SequenceEqual(new byte[] { 1 }) == true);
 }
 
 static void SchrodingerCatAlignsWithImpostorKiller()

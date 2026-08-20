@@ -8,6 +8,7 @@ public sealed class RoleEngine
 {
     private readonly IRoleGameGateway _gateway;
     private readonly RoleOptions _options;
+    private VictoryResult _emittedVictory = VictoryResult.None;
     private readonly Dictionary<byte, PlayerState> _players = new();
     private readonly Dictionary<byte, BodyState> _bodies = new();
     private readonly List<Footprint> _footprints = new();
@@ -221,6 +222,18 @@ public sealed class RoleEngine
             }
         }
         return evaluateVictory ? EvaluateVictory(now) : VictoryResult.None;
+    }
+
+    /// <summary>
+    /// 神（ゴッド）が自分の必要タスクを完了した時だけ、ゲーム本体のタスク完了監視から呼び出す。
+    /// 実際のタスク完了判定はPlayerTask側で行い、RoleEngineは生存・役職・勝利イベントだけを確定する。
+    /// </summary>
+    public bool TryDeclareGodTaskVictory(byte playerId, float now)
+    {
+        if (!_players.TryGetValue(playerId, out var god) || !god.IsAlive || god.PrimaryRole != RoleId.God)
+            return false;
+        EmitVictory(new VictoryResult(VictoryKind.God, new[] { playerId }), now);
+        return true;
     }
 
     /// <summary>会議UI用のマッドゲッサー残弾判定。ホスト側のTryMeetingGuessでも同じ条件を再検証する。</summary>
@@ -1268,8 +1281,12 @@ public sealed class RoleEngine
 
     private void EmitVictory(VictoryResult result, float now)
     {
-        if (result.Kind != VictoryKind.None)
-            _gateway.Emit(new GameEvent(GameEventKind.Victory, now, Detail: result.Kind.ToString(), ParticipantIds: result.WinnerIds));
+        // Tick・会議終了・能力完了が同じフレームに重なっても、最初に確定した勝利だけを一度送る。
+        // 重複した終了RPCや結果表示が会議遷移を壊さないよう、RoleEngine側で勝利を単発化する。
+        if (result.Kind == VictoryKind.None || _emittedVictory.Kind != VictoryKind.None)
+            return;
+        _emittedVictory = result;
+        _gateway.Emit(new GameEvent(GameEventKind.Victory, now, Detail: result.Kind.ToString(), ParticipantIds: result.WinnerIds));
     }
 
     /// <summary>

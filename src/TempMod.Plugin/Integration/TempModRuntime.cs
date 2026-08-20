@@ -64,6 +64,8 @@ internal sealed class TempModRuntime : IRoleGameGateway
     private bool _wasInFreeplay;
     private bool _restoreHudAfterMeeting;
     private float _forceMeetingRecoveryAt = -1f;
+    private bool _customVictoryPending;
+    private bool _customEndGameRequested;
     internal TempModRuntime(ManualLogSource log, TempModSettings settings)
     {
         _log = log;
@@ -320,7 +322,56 @@ internal sealed class TempModRuntime : IRoleGameGateway
                 TryUsePrimaryAbility(player);
         }
         if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
+        {
+            // SNR Godの個別タスク条件を、ホストが同期済みTaskInfoから確定する。
+            // 非ホストのタスク完了もNetworkedPlayerInfo.Tasksへ反映された後にここで一度だけ評価する。
+            CheckGodTaskVictory();
             _engine.Tick(Time.time);
+            TryFinishCustomVictory();
+        }
+    }
+
+    private void CheckGodTaskVictory()
+    {
+        if (!_assignmentReceived || _customVictoryPending || _customEndGameRequested)
+            return;
+
+        foreach (var state in _engine.Players.Values)
+        {
+            if (!state.IsAlive || state.PrimaryRole != RoleId.God)
+                continue;
+            var player = FindPlayer(state.PlayerId);
+            var tasks = player?.Data?.Tasks;
+            if (tasks == null || tasks.Count == 0)
+                continue;
+
+            var allCompleted = true;
+            for (var index = 0; index < tasks.Count; index++)
+            {
+                var task = tasks[index];
+                if (task == null || !task.Complete)
+                {
+                    allCompleted = false;
+                    break;
+                }
+            }
+            if (allCompleted && _engine.TryDeclareGodTaskVictory(state.PlayerId, Time.time))
+                return;
+        }
+    }
+
+    private void TryFinishCustomVictory()
+    {
+        if (!_customVictoryPending || _customEndGameRequested || TempModPlugin.MatchSettings.PreventGameEnd.Value)
+            return;
+        if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost || GameManager.Instance == null)
+            return;
+
+        _customEndGameRequested = true;
+        _customVictoryPending = false;
+        // バニラに独自の勝利理由はないため、標準の終了RPCを使って全クライアントを終了画面へ遷移させる。
+        // 勝者・役職・キル記録はEndGameManager.StartパッチでtempMODの結果表示に置換する。
+        GameManager.Instance.RpcEndGame(GameOverReason.ImpostorDisconnect, false);
     }
 
     private void EnsureNativeRole(PlayerControl player)
@@ -1111,6 +1162,8 @@ internal sealed class TempModRuntime : IRoleGameGateway
         _armedMeetingAbility = 0;
         _restoreHudAfterMeeting = false;
         _forceMeetingRecoveryAt = -1f;
+        _customVictoryPending = false;
+        _customEndGameRequested = false;
     }
 
     private void TryApplyFreeplayPracticeAssignment()
@@ -1424,6 +1477,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
         if (gameEvent.Kind == GameEventKind.Victory)
         {
             _victoryLabel = VictoryLabel(gameEvent.Detail);
+            _customVictoryPending = true;
             foreach (var winnerId in gameEvent.ParticipantIds ?? Array.Empty<byte>())
             {
                 if (_engine.Players.TryGetValue(winnerId, out var winner))
