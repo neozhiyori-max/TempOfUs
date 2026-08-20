@@ -12,24 +12,22 @@ using SuperNewRoles.Roles;
 namespace SuperNewRoles.UI;
 
 /// <summary>
-/// SNR型のカテゴリ切替・役職一覧・詳細設定フローを保ちながら、
-/// SNR由来の画像、アイコン、プリファブを使用しないtempMOD文字ラベルUI。
+/// SNR型の「カテゴリ -> 役職一覧 -> 設定」導線を、画像なしの文字ラベルで再現する。
+/// 標準設定のタブ本体を操作せず、複製した専用パネルだけへ表示する。
 /// </summary>
 internal static class TempModRoleSettingsPresenter
 {
     private const string EntryButtonName = "tempMOD_SettingsButton";
+    private const string PanelName = "tempMOD_RoleSettingsPanel";
     private const string TabPrefix = "tempMOD_SNR_Tab_";
     private const string RowPrefix = "tempMOD_SNR_Row_";
     private const float RowSpacing = 0.43f;
 
-    private enum Category
-    {
-        General,
-        Crewmate,
-        Impostor,
-        Neutral,
-    }
+    private static GameObject? _panelRoot;
+    private static GameOptionsMenu? _panelMenu;
+    private static GameSettingMenu? _ownerMenu;
 
+    private enum Category { General, Crewmate, Impostor, Neutral }
     private readonly record struct RoleDisplay(RoleId Id, string JapaneseName, string Color);
 
     private static readonly RoleDisplay[] FirstImpostorWave =
@@ -44,7 +42,14 @@ internal static class TempModRoleSettingsPresenter
     [HarmonyPatch(typeof(GameSettingMenu), nameof(GameSettingMenu.Start))]
     internal static class GameSettingMenuStartPatch
     {
-        private static void Postfix(GameSettingMenu __instance) => AddEntryButton(__instance);
+        private static void Postfix(GameSettingMenu __instance) => EnsureEntryButton(__instance);
+    }
+
+    // Among Us側が標準ボタンを再設定しても、tempMOD入口の文字とクリックを維持する。
+    [HarmonyPatch(typeof(GameSettingMenu), nameof(GameSettingMenu.Update))]
+    internal static class GameSettingMenuUpdatePatch
+    {
+        private static void Postfix(GameSettingMenu __instance) => EnsureEntryButton(__instance);
     }
 
     [HarmonyPatch(typeof(GameSettingMenu), nameof(GameSettingMenu.Close))]
@@ -52,14 +57,13 @@ internal static class TempModRoleSettingsPresenter
     {
         private static void Postfix(GameSettingMenu __instance)
         {
-            RemoveTabs(__instance);
-            RestoreStandardNavigation(__instance);
+            ClosePanel(__instance);
             if (CustomOptionSaver.IsLoaded)
                 CustomOptionSaver.Save();
         }
     }
 
-    private static void AddEntryButton(GameSettingMenu menu)
+    private static void EnsureEntryButton(GameSettingMenu menu)
     {
         if (menu == null || menu.GameSettingsButton == null || menu.RoleSettingsButton == null)
             return;
@@ -68,46 +72,89 @@ internal static class TempModRoleSettingsPresenter
         var buttonObject = existing != null
             ? existing.gameObject
             : UnityEngine.Object.Instantiate(menu.GameSettingsButton.gameObject, menu.GameSettingsButton.transform.parent);
-
         buttonObject.name = EntryButtonName;
         buttonObject.transform.localPosition = menu.RoleSettingsButton.transform.localPosition + new Vector3(0f, -0.56f, 0f);
         buttonObject.transform.localScale = menu.GameSettingsButton.transform.localScale;
-        buttonObject.SetActive(true);
+
+        var isPanelOpen = _panelRoot != null && _panelRoot.activeSelf;
+        buttonObject.SetActive(!isPanelOpen);
         SetAllText(buttonObject, "tempMOD設定");
 
         var button = buttonObject.GetComponent(Il2CppType.Of<PassiveButton>()).TryCast<PassiveButton>();
         if (button == null)
             return;
-
         button.OnClick = new Button.ButtonClickedEvent();
-        button.OnClick.AddListener((UnityAction)(() => OpenCategory(menu, Category.Impostor)));
+        button.OnClick.AddListener((UnityAction)(() => OpenPanel(menu, Category.Impostor)));
     }
 
-    private static void OpenCategory(GameSettingMenu menu, Category category)
+    private static void OpenPanel(GameSettingMenu menu, Category category)
     {
         if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost || menu.GameSettingsTab == null)
             return;
 
-        if (menu.PresetsTab != null)
-            menu.PresetsTab.gameObject.SetActive(false);
-        if (menu.RoleSettingsTab != null)
-            menu.RoleSettingsTab.gameObject.SetActive(false);
+        _ownerMenu = menu;
+        if (_panelRoot == null)
+        {
+            var source = menu.GameSettingsTab.gameObject;
+            _panelRoot = UnityEngine.Object.Instantiate(source, menu.transform);
+            _panelRoot.name = PanelName;
+            _panelRoot.transform.localPosition = source.transform.localPosition;
+            _panelRoot.transform.localScale = source.transform.localScale;
+            _panelRoot.transform.SetAsLastSibling();
+            _panelMenu = _panelRoot.GetComponent(Il2CppType.Of<GameOptionsMenu>()).TryCast<GameOptionsMenu>();
+        }
 
-        menu.GameSettingsTab.gameObject.SetActive(true);
-        // 複製元の標準ボタンが有効なうちに文字タブを生成し、その後で左ナビゲーションを隠す。
-        CreateCategoryTabs(menu, category);
-        HideStandardNavigation(menu);
-        ShowCategory(menu.GameSettingsTab, category);
+        if (_panelMenu == null)
+        {
+            SuperNewRolesPlugin.Logger?.LogError("tempMOD専用設定パネルからGameOptionsMenuを取得できません。");
+            return;
+        }
+
+        HideStandardMenu(menu);
+        _panelRoot.SetActive(true);
+        CreateCategoryTabs(menu, _panelRoot.transform, category);
+        ShowCategory(_panelMenu, category);
+        SuperNewRolesPlugin.Logger?.LogInfo($"tempMOD専用設定パネルを表示: {category}");
     }
 
-    /// <summary>
-    /// SNRの上部カテゴリ切替と同じ情報構造を、文字ボタンだけで提供する。
-    /// 画像タブ・役職アイコンは使用しない。
-    /// </summary>
-    private static void CreateCategoryTabs(GameSettingMenu menu, Category selected)
+    private static void ClosePanel(GameSettingMenu menu)
     {
-        RemoveTabs(menu);
+        if (_panelRoot != null)
+            UnityEngine.Object.Destroy(_panelRoot);
+        _panelRoot = null;
+        _panelMenu = null;
+        _ownerMenu = null;
+        RestoreStandardMenu(menu);
+    }
 
+    private static void HideStandardMenu(GameSettingMenu menu)
+    {
+        if (menu.PresetsTab != null) menu.PresetsTab.gameObject.SetActive(false);
+        if (menu.GameSettingsTab != null) menu.GameSettingsTab.gameObject.SetActive(false);
+        if (menu.RoleSettingsTab != null) menu.RoleSettingsTab.gameObject.SetActive(false);
+        SetActive(menu.GameSettingsButton, false);
+        SetActive(menu.RoleSettingsButton, false);
+        foreach (var name in new[] { EntryButtonName, "PresetsButton", "GamePresetsButton", "PresetButton" })
+        {
+            var target = FindDeep(menu.transform, name);
+            if (target != null) target.gameObject.SetActive(false);
+        }
+    }
+
+    private static void RestoreStandardMenu(GameSettingMenu menu)
+    {
+        SetActive(menu.GameSettingsButton, true);
+        SetActive(menu.RoleSettingsButton, true);
+        foreach (var name in new[] { EntryButtonName, "PresetsButton", "GamePresetsButton", "PresetButton" })
+        {
+            var target = FindDeep(menu.transform, name);
+            if (target != null) target.gameObject.SetActive(true);
+        }
+    }
+
+    private static void CreateCategoryTabs(GameSettingMenu menu, Transform panelRoot, Category selected)
+    {
+        RemoveTabs(panelRoot);
         var labels = new[]
         {
             (Category.General, "基本設定", "#FFD166"),
@@ -116,25 +163,22 @@ internal static class TempModRoleSettingsPresenter
             (Category.Neutral, "第三陣営", "#55D7FF"),
         };
 
-        var parent = menu.GameSettingsTab != null ? menu.GameSettingsTab.transform : menu.transform;
         for (var index = 0; index < labels.Length; index++)
         {
             var data = labels[index];
-            var tabObject = UnityEngine.Object.Instantiate(menu.GameSettingsButton.gameObject, parent);
+            var tabObject = UnityEngine.Object.Instantiate(menu.GameSettingsButton.gameObject, panelRoot);
             tabObject.name = TabPrefix + data.Item1;
             tabObject.transform.localScale = Vector3.one * 0.66f;
-            // GameSettingsTabの前面レイヤーへ固定し、スクロール領域より上に配置する。
-            tabObject.transform.localPosition = new Vector3(-2.35f + 1.57f * index, 1.78f, -0.75f);
+            tabObject.transform.localPosition = new Vector3(-2.35f + 1.57f * index, 1.78f, -2f);
             tabObject.SetActive(true);
             SetAllText(tabObject, data.Item1 == selected
                 ? $"<color={data.Item3}>【{data.Item2}】</color>"
                 : $"<color={data.Item3}>{data.Item2}</color>");
 
             var button = tabObject.GetComponent(Il2CppType.Of<PassiveButton>()).TryCast<PassiveButton>();
-            if (button == null)
-                continue;
+            if (button == null) continue;
             button.OnClick = new Button.ButtonClickedEvent();
-            button.OnClick.AddListener((UnityAction)(() => OpenCategory(menu, data.Item1)));
+            button.OnClick.AddListener((UnityAction)(() => OpenPanel(menu, data.Item1)));
         }
     }
 
@@ -147,7 +191,6 @@ internal static class TempModRoleSettingsPresenter
             menu.settingsContainer.GetChild(index).gameObject.SetActive(false);
         RemoveExistingRows(menu.settingsContainer);
 
-        // 上部のカテゴリタブに重ならず、見切れない開始位置にする。
         var y = 0.90f;
         var title = category switch
         {
@@ -168,14 +211,13 @@ internal static class TempModRoleSettingsPresenter
                 break;
             case Category.Impostor:
                 CreateStaticRow(menu, ref y, "第1波", "5役職だけが設定・抽選対象です", "ImpostorStatus");
-                foreach (var role in FirstImpostorWave)
-                    CreateRoleRows(menu, ref y, role);
+                foreach (var role in FirstImpostorWave) CreateRoleRows(menu, ref y, role);
                 break;
             case Category.Crewmate:
                 CreateStaticRow(menu, ref y, "準備中", "クルー役職は第2波以降に追加します", "CrewPlaceholder");
                 break;
             case Category.Neutral:
-                CreateStaticRow(menu, ref y, "準備中", "第三陣営はインポスター第1波の検証後に追加します", "NeutralPlaceholder");
+                CreateStaticRow(menu, ref y, "準備中", "第三陣営は第1波の検証後に追加します", "NeutralPlaceholder");
                 break;
         }
     }
@@ -189,65 +231,40 @@ internal static class TempModRoleSettingsPresenter
             return;
         }
 
-        CreateTwoWayRow(
-            menu,
-            ref y,
-            $"<color={role.Color}>{role.JapaneseName}</color>  人数",
-            $"{roleOption.NumberOfCrews} 人",
-            "−",
-            "＋",
-            () => UpdateRoleCount(role.Id, -1, menu),
-            () => UpdateRoleCount(role.Id, +1, menu),
-            role.Id + "Count");
-
-        CreateTwoWayRow(
-            menu,
-            ref y,
-            $"<color={role.Color}>{role.JapaneseName}</color>  出現率",
-            $"{roleOption.Percentage}%",
-            "−10%",
-            "+10%",
-            () => UpdateRoleRate(role.Id, -10, menu),
-            () => UpdateRoleRate(role.Id, +10, menu),
-            role.Id + "Rate");
+        CreateTwoWayRow(menu, ref y, $"<color={role.Color}>{role.JapaneseName}</color>  人数", $"{roleOption.NumberOfCrews} 人", "−", "＋",
+            () => UpdateRoleCount(role.Id, -1, menu), () => UpdateRoleCount(role.Id, +1, menu), role.Id + "Count");
+        CreateTwoWayRow(menu, ref y, $"<color={role.Color}>{role.JapaneseName}</color>  出現率", $"{roleOption.Percentage}%", "−10%", "+10%",
+            () => UpdateRoleRate(role.Id, -10, menu), () => UpdateRoleRate(role.Id, +10, menu), role.Id + "Rate");
     }
 
     private static void UpdateRoleCount(RoleId roleId, int delta, GameOptionsMenu menu)
     {
-        var roleOption = RoleOptionManager.GetRoleOption(roleId);
-        if (roleOption == null)
-            return;
-
-        var count = Math.Clamp((int)roleOption.NumberOfCrews + delta, 0, 15);
-        var rate = count == 0 ? 0 : Math.Max(10, roleOption.Percentage);
-        roleOption.UpdateValues((byte)count, rate);
-        SaveAndRefresh(menu, Category.Impostor);
+        var option = RoleOptionManager.GetRoleOption(roleId);
+        if (option == null) return;
+        var count = Math.Clamp((int)option.NumberOfCrews + delta, 0, 15);
+        option.UpdateValues((byte)count, count == 0 ? 0 : Math.Max(10, option.Percentage));
+        SaveAndRefresh(menu);
     }
 
     private static void UpdateRoleRate(RoleId roleId, int delta, GameOptionsMenu menu)
     {
-        var roleOption = RoleOptionManager.GetRoleOption(roleId);
-        if (roleOption == null)
-            return;
-
-        var rate = Math.Clamp(roleOption.Percentage + delta, 0, 100);
-        var count = rate == 0 ? 0 : Math.Max(1, (int)roleOption.NumberOfCrews);
-        roleOption.UpdateValues((byte)count, rate);
-        SaveAndRefresh(menu, Category.Impostor);
+        var option = RoleOptionManager.GetRoleOption(roleId);
+        if (option == null) return;
+        var rate = Math.Clamp(option.Percentage + delta, 0, 100);
+        option.UpdateValues((byte)(rate == 0 ? 0 : Math.Max(1, (int)option.NumberOfCrews)), rate);
+        SaveAndRefresh(menu);
     }
 
-    private static void SaveAndRefresh(GameOptionsMenu menu, Category category)
+    private static void SaveAndRefresh(GameOptionsMenu menu)
     {
-        if (CustomOptionSaver.IsLoaded)
-            CustomOptionSaver.Save();
-        ShowCategory(menu, category);
+        if (CustomOptionSaver.IsLoaded) CustomOptionSaver.Save();
+        ShowCategory(menu, Category.Impostor);
     }
 
     private static void CreateHeader(GameOptionsMenu menu, ref float y, string title, string value)
     {
         var row = CreateOption(menu, y, "Header_" + Math.Abs(y));
-        if (row == null)
-            return;
+        if (row == null) return;
         row.TitleText.text = title;
         row.ValueText.text = "<size=55%>" + value + "</size>";
         HideButtons(row);
@@ -257,8 +274,7 @@ internal static class TempModRoleSettingsPresenter
     private static void CreateStaticRow(GameOptionsMenu menu, ref float y, string title, string value, string key)
     {
         var row = CreateOption(menu, y, key);
-        if (row == null)
-            return;
+        if (row == null) return;
         row.TitleText.text = "<size=72%>" + title + "</size>";
         row.ValueText.text = "<size=60%>" + value + "</size>";
         HideButtons(row);
@@ -268,8 +284,7 @@ internal static class TempModRoleSettingsPresenter
     private static void CreateTwoWayRow(GameOptionsMenu menu, ref float y, string title, string value, string leftLabel, string rightLabel, Action onLeft, Action onRight, string key)
     {
         var row = CreateOption(menu, y, key);
-        if (row == null)
-            return;
+        if (row == null) return;
         row.TitleText.text = "<size=74%>" + title + "</size>";
         row.ValueText.text = value;
         ConfigureButton(row.MinusBtn, leftLabel, onLeft);
@@ -279,42 +294,31 @@ internal static class TempModRoleSettingsPresenter
 
     private static StringOption? CreateOption(GameOptionsMenu menu, float y, string key)
     {
-        var cloneObject = UnityEngine.Object.Instantiate(menu.stringOptionOrigin.gameObject, menu.settingsContainer);
-        var option = cloneObject.GetComponent(Il2CppType.Of<StringOption>()).TryCast<StringOption>();
-        if (option == null)
-            return null;
-
-        cloneObject.name = RowPrefix + key;
-        cloneObject.SetActive(true);
-        cloneObject.transform.localPosition = new Vector3(0f, y, -1f);
-        cloneObject.transform.localScale = Vector3.one;
+        var clone = UnityEngine.Object.Instantiate(menu.stringOptionOrigin.gameObject, menu.settingsContainer);
+        var option = clone.GetComponent(Il2CppType.Of<StringOption>()).TryCast<StringOption>();
+        if (option == null) return null;
+        clone.name = RowPrefix + key;
+        clone.SetActive(true);
+        clone.transform.localPosition = new Vector3(0f, y, -1f);
+        clone.transform.localScale = Vector3.one;
         return option;
     }
 
     private static void ConfigureButton(PassiveButton? button, string label, Action action)
     {
-        if (button == null)
-            return;
+        if (button == null) return;
         button.gameObject.SetActive(true);
-        button.transform.localScale = Vector3.one;
         button.ChangeButtonText(label);
-        foreach (var sprite in button.gameObject.GetComponentsInChildren<SpriteRenderer>(true))
-            sprite.color = Color.white;
-        foreach (var text in button.gameObject.GetComponentsInChildren<TMP_Text>(true))
-        {
-            text.text = label;
-            text.color = Color.white;
-        }
+        foreach (var sprite in button.gameObject.GetComponentsInChildren<SpriteRenderer>(true)) sprite.color = Color.white;
+        foreach (var text in button.gameObject.GetComponentsInChildren<TMP_Text>(true)) { text.text = label; text.color = Color.white; }
         button.OnClick = new Button.ButtonClickedEvent();
         button.OnClick.AddListener((UnityAction)(() => action()));
     }
 
     private static void HideButtons(StringOption row)
     {
-        if (row.MinusBtn != null)
-            row.MinusBtn.gameObject.SetActive(false);
-        if (row.PlusBtn != null)
-            row.PlusBtn.gameObject.SetActive(false);
+        if (row.MinusBtn != null) row.MinusBtn.gameObject.SetActive(false);
+        if (row.PlusBtn != null) row.PlusBtn.gameObject.SetActive(false);
     }
 
     private static void RemoveExistingRows(Transform container)
@@ -322,73 +326,38 @@ internal static class TempModRoleSettingsPresenter
         for (var index = container.childCount - 1; index >= 0; index--)
         {
             var child = container.GetChild(index);
-            if (child != null && child.name.StartsWith(RowPrefix, StringComparison.Ordinal))
-                UnityEngine.Object.Destroy(child.gameObject);
+            if (child != null && child.name.StartsWith(RowPrefix, StringComparison.Ordinal)) UnityEngine.Object.Destroy(child.gameObject);
         }
     }
 
-    private static void HideStandardNavigation(GameSettingMenu menu)
+    private static void RemoveTabs(Transform root)
     {
-        // GameSettingMenuが公開している標準ボタンを確実に隠す。
-        SetActive(menu.GameSettingsButton, false);
-        SetActive(menu.RoleSettingsButton, false);
-
-        // バージョン差のあるプリセットボタンとtempMOD入口は名前探索で隠す。
-        foreach (var name in new[] { EntryButtonName, "PresetsButton", "GamePresetsButton", "PresetButton", "GameSettingsButton", "RoleSettingsButton" })
+        for (var index = root.childCount - 1; index >= 0; index--)
         {
-            var target = FindDeep(menu.transform, name);
-            if (target != null)
-                target.gameObject.SetActive(false);
-        }
-    }
-
-    private static void RestoreStandardNavigation(GameSettingMenu menu)
-    {
-        SetActive(menu.GameSettingsButton, true);
-        SetActive(menu.RoleSettingsButton, true);
-        foreach (var name in new[] { EntryButtonName, "PresetsButton", "GamePresetsButton", "PresetButton" })
-        {
-            var target = FindDeep(menu.transform, name);
-            if (target != null)
-                target.gameObject.SetActive(true);
+            var child = root.GetChild(index);
+            if (child != null && child.name.StartsWith(TabPrefix, StringComparison.Ordinal)) UnityEngine.Object.Destroy(child.gameObject);
         }
     }
 
     private static void SetActive(Component? component, bool active)
     {
-        if (component != null)
-            component.gameObject.SetActive(active);
+        if (component != null) component.gameObject.SetActive(active);
     }
 
     private static Transform? FindDeep(Transform root, string name)
     {
-        if (root.name == name)
-            return root;
+        if (root.name == name) return root;
         for (var index = 0; index < root.childCount; index++)
         {
             var found = FindDeep(root.GetChild(index), name);
-            if (found != null)
-                return found;
+            if (found != null) return found;
         }
         return null;
     }
 
-    private static void RemoveTabs(GameSettingMenu menu)
-    {
-        if (menu == null)
-            return;
-        var root = menu.GameSettingsTab != null ? menu.GameSettingsTab.transform : menu.transform;
-        for (var index = root.childCount - 1; index >= 0; index--)
-        {
-            var child = root.GetChild(index);
-            if (child != null && child.name.StartsWith(TabPrefix, StringComparison.Ordinal))
-                UnityEngine.Object.Destroy(child.gameObject);
-        }
-    }
-
     private static void SetAllText(GameObject gameObject, string text)
     {
-        foreach (var label in gameObject.GetComponentsInChildren<TMP_Text>(true))
-            label.text = text;
+        foreach (var label in gameObject.GetComponentsInChildren<TMP_Text>(true)) label.text = text;
+        foreach (var label in gameObject.GetComponentsInChildren<TextMeshPro>(true)) label.text = text;
     }
 }

@@ -365,6 +365,9 @@ public partial class SuperNewRolesPlugin : BasePlugin
 
     public void Update()
     {
+        // MainMenuManagerがプラグイン読込後に生成される場合にも、最初のタイトル画面だけでロゴを表示する。
+        TitleLogoPresenter.ShowAtInitialTitleOnly();
+
         if (_mainThreadActions.Count > 0)
         {
             List<Action> actionsToExecute;

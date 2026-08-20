@@ -30,7 +30,6 @@ internal static class TitleLogoPresenter
     {
         if (_shownAtInitialTitle)
             return;
-        _shownAtInitialTitle = true;
 
         try
         {
@@ -40,7 +39,7 @@ internal static class TitleLogoPresenter
             var anchor = GameObject.Find(AnchorPath);
             if (anchor == null)
             {
-                SuperNewRolesPlugin.Logger?.LogWarning($"タイトルロゴの基準点が見つかりません: {AnchorPath}");
+                // タイトル画面へ遷移する前・ロビー滞在中は基準点が存在しない。次フレームで再試行する。
                 return;
             }
 
@@ -58,6 +57,7 @@ internal static class TitleLogoPresenter
                 ?? throw new InvalidOperationException("タイトルロゴ用のSpriteRendererを生成できません。");
             renderer.sprite = GetLogo();
             renderer.sortingOrder = 50;
+            _shownAtInitialTitle = true;
             SuperNewRolesPlugin.Logger?.LogInfo("tempMODのタイトルロゴを表示しました。");
         }
         catch (Exception exception)
