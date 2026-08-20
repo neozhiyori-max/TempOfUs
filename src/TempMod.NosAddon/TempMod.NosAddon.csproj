@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>TempMod.NosAddon</AssemblyName>
+    <RootNamespace>TempMod.NosAddon</RootNamespace>
+    <Version>0.1.0</Version>
+    <NoWarn>CS0649;CS863</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <NosRoot Condition="'$(NosRoot)' == ''">/home/ubuntu/nos_distribution_audit</NosRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NosReference Include="$(NosRoot)/BepInEx/core/*.dll" />
+    <NosReference Include="$(NosRoot)/BepInEx/interop/*.dll" />
+    <Reference Include="@(NosReference)" />
+  </ItemGroup>
+</Project>
