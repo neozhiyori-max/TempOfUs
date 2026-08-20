@@ -112,6 +112,7 @@ public partial class SuperNewRolesPlugin : BasePlugin
         ModTranslation.Load();
         Harmony.CreateClassProcessor(typeof(TitleLogoPresenter.MainMenuManagerStartPatch)).Patch();
         Harmony.CreateClassProcessor(typeof(RoleOptionMenu.RoleOptionMenuStartPatch)).Patch();
+        Harmony.CreateClassProcessor(typeof(TempModCategoryTextPatch.GameSettingMenuStartPatch)).Patch();
         Harmony.CreateClassProcessor(typeof(RoleOptionMenu.RoleOptionMenuClosePatch)).Patch();
         Harmony.CreateClassProcessor(typeof(RoleOptionMenu.RoleOptionMenuLateUpdatePatch)).Patch();
 
