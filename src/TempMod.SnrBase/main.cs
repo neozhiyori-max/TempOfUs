@@ -99,10 +99,14 @@ public partial class SuperNewRolesPlugin : BasePlugin
         Logger = Log;
         Instance = this;
 
-        // SNR由来の役職・設定・同期・Harmonyパッチを段階的に採用する前の最小ローダー。
-        // 外部通信、独自サーバ、解析、告知、コスメ、CPU設定、役職初期化は一切行わない。
-        Logger.LogInfo("tempMOD SNR foundation 0.4.0 を読み込みました。全SNR機能は現在無効です。");
-        Logger.LogInfo("次段階で、外部機能を持ち込まないSNRの役職・設定・同期基盤だけを有効化します。");
+        // 外部通信、独自サーバ、解析、告知、コスメ、CPU設定、Harmony全適用、RPC登録は行わない。
+        // 最初のインポスター5役職だけを、SNR本来の役職・設定モデルへ登録する。
+        ConfigRoles.Init();
+        CustomRoleManager.Load();
+        CustomOptionManager.Load();
+
+        Logger.LogInfo("tempMOD SNR foundation 0.4.0 を読み込みました。");
+        Logger.LogInfo("SNR由来の役職・ローカル設定を5役職だけ登録しました。同期・会議・能力パッチは未有効です。");
     }
 
     private static void LoadAnnouncementImageDecoder()

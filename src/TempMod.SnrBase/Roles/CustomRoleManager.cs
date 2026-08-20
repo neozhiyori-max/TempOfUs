@@ -36,6 +36,8 @@ public static class CustomRoleManager
             .Where(type => typeof(IRoleBase).IsAssignableFrom(type))
             // RoleBase<T> を継承している型に絞る（中間基底クラスがあっても拾えるように継承ツリーを辿る）
             .Where(type => InheritsFromOpenGenericBase(type, typeof(RoleBase<>)))
+            // tempMODで検証済みの役職だけを5件単位で登録する
+            .Where(TempModRoleScope.IsEnabledRoleType)
             // 抽象クラスは除外
             .Where(type => !type.IsAbstract)
             // さらにBaseSingletonがついている型なので、BaseSingleton<T>のInstanceプロパティを取得する
@@ -55,6 +57,7 @@ public static class CustomRoleManager
         AllModifiers = SuperNewRolesPlugin.Assembly.GetTypes()
             .Where(type => typeof(IModifierBase).IsAssignableFrom(type))
             .Where(type => InheritsFromOpenGenericBase(type, typeof(ModifierBase<>)))
+            .Where(TempModRoleScope.IsEnabledRoleType)
             // 抽象クラスは除外
             .Where(type => !type.IsAbstract)
             .Select(type =>
@@ -73,6 +76,7 @@ public static class CustomRoleManager
         AllGhostRoles = SuperNewRolesPlugin.Assembly.GetTypes()
             .Where(type => typeof(IGhostRoleBase).IsAssignableFrom(type))
             .Where(type => InheritsFromOpenGenericBase(type, typeof(GhostRoleBase<>)))
+            .Where(TempModRoleScope.IsEnabledRoleType)
             // 抽象クラスは除外
             .Where(type => !type.IsAbstract)
             .Select(type =>

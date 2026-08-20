@@ -159,6 +159,9 @@ public static class CustomOptionManager
         SuperNewRoles.Logger.Info("[Splash] Loading CustomOptions...");
         foreach (var type in SuperNewRolesPlugin.Assembly.GetTypes())
         {
+            if (!TempModRoleScope.ShouldDiscoverOptionsFrom(type))
+                continue;
+
             foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
             {
                 // カテゴリーフィールドの場合、staticフィールドのみを対象にする
