@@ -96,7 +96,9 @@ internal static class TempModRoleSettingsPresenter
         if (_panelRoot == null)
         {
             var source = menu.GameSettingsTab.gameObject;
-            _panelRoot = UnityEngine.Object.Instantiate(source, menu.transform);
+            // GameSettingMenuの子ではなく兄弟階層へ置く。これにより標準メニュー全体を隠しても専用パネルは残る。
+            var parent = menu.transform.parent;
+            _panelRoot = UnityEngine.Object.Instantiate(source, parent);
             _panelRoot.name = PanelName;
             _panelRoot.transform.localPosition = source.transform.localPosition;
             _panelRoot.transform.localScale = source.transform.localScale;
@@ -110,9 +112,11 @@ internal static class TempModRoleSettingsPresenter
             return;
         }
 
-        HideStandardMenu(menu);
+        // 専用パネルを有効化してから標準メニュー全体を隠す。
         _panelRoot.SetActive(true);
         CreateCategoryTabs(menu, _panelRoot.transform, category);
+        CreateCloseButton(menu, _panelRoot.transform);
+        HideStandardMenu(menu);
         ShowCategory(_panelMenu, category);
         SuperNewRolesPlugin.Logger?.LogInfo($"tempMOD専用設定パネルを表示: {category}");
     }
@@ -129,27 +133,36 @@ internal static class TempModRoleSettingsPresenter
 
     private static void HideStandardMenu(GameSettingMenu menu)
     {
-        if (menu.PresetsTab != null) menu.PresetsTab.gameObject.SetActive(false);
-        if (menu.GameSettingsTab != null) menu.GameSettingsTab.gameObject.SetActive(false);
-        if (menu.RoleSettingsTab != null) menu.RoleSettingsTab.gameObject.SetActive(false);
-        SetActive(menu.GameSettingsButton, false);
-        SetActive(menu.RoleSettingsButton, false);
-        foreach (var name in new[] { EntryButtonName, "PresetsButton", "GamePresetsButton", "PresetButton" })
-        {
-            var target = FindDeep(menu.transform, name);
-            if (target != null) target.gameObject.SetActive(false);
-        }
+        // 左ナビゲーション、プリセット画面、ゲーム設定画面を含む標準ウィンドウ全体を隠す。
+        // 専用パネルは兄弟階層にあるため、影響を受けない。
+        menu.gameObject.SetActive(false);
     }
 
     private static void RestoreStandardMenu(GameSettingMenu menu)
     {
+        menu.gameObject.SetActive(true);
         SetActive(menu.GameSettingsButton, true);
         SetActive(menu.RoleSettingsButton, true);
-        foreach (var name in new[] { EntryButtonName, "PresetsButton", "GamePresetsButton", "PresetButton" })
-        {
-            var target = FindDeep(menu.transform, name);
-            if (target != null) target.gameObject.SetActive(true);
-        }
+        var entry = FindDeep(menu.transform, EntryButtonName);
+        if (entry != null) entry.gameObject.SetActive(true);
+    }
+
+    private static void CreateCloseButton(GameSettingMenu menu, Transform panelRoot)
+    {
+        var existing = panelRoot.Find("tempMOD_CloseButton");
+        if (existing != null) return;
+
+        var source = FindDeep(menu.transform, "CloseButton");
+        if (source == null) return;
+        var closeObject = UnityEngine.Object.Instantiate(source.gameObject, panelRoot);
+        closeObject.name = "tempMOD_CloseButton";
+        closeObject.transform.localPosition = source.localPosition;
+        closeObject.transform.localScale = source.localScale;
+        closeObject.SetActive(true);
+        var button = closeObject.GetComponent(Il2CppType.Of<PassiveButton>()).TryCast<PassiveButton>();
+        if (button == null) return;
+        button.OnClick = new Button.ButtonClickedEvent();
+        button.OnClick.AddListener((UnityAction)(() => ClosePanel(menu)));
     }
 
     private static void CreateCategoryTabs(GameSettingMenu menu, Transform panelRoot, Category selected)
