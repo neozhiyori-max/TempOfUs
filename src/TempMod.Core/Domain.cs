@@ -253,6 +253,12 @@ public sealed class RoleOptions
     public float VultureCooldown { get; init; } = 30f;
     /// <summary>SNR Vultureの勝利に必要な既定死体回収数。</summary>
     public int VultureRequiredBodies { get; init; } = 3;
+    /// <summary>SNR Schrodinger's Catの同調後キル能力の既定値。</summary>
+    public bool SchrodingerCatHasKillAbility { get; init; } = true;
+    /// <summary>SNR Schrodinger's Catの同調後キルクールダウン既定値。</summary>
+    public float SchrodingerCatKillCooldown { get; init; } = 45f;
+    /// <summary>SNR Schrodinger's Catの非特定第三陣営から攻撃された場合にクルー化する設定。</summary>
+    public bool SchrodingerCatCrewOnKillByNonSpecific { get; init; }
     public float SpecialAbilityCooldown { get; init; } = 30f;
     public float CleanerDuration { get; init; } = 3f;
     public float BombDelay { get; init; } = 10f;

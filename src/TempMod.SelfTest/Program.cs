@@ -37,6 +37,8 @@ var tests = new (string Name, Action Run)[]
     ("ゾンビはクルーを子ゾンビに感染できる", ZombieInfectsCrew),
     ("ハゲタカの死体回収数は時間経過後も残る", VultureCollectionCountPersists),
     ("SNR版ハゲタカは必要死体数到達で即座に単独勝利する", VultureWinsImmediatelyAtConfiguredBodyCount),
+    ("SNR版シュレディンガーの猫はインポスターに攻撃されると死亡せず同調する", SchrodingerCatAlignsWithImpostorKiller),
+    ("SNR版シュレディンガーの猫はジャッカルに攻撃されるとサイドキックへ同調する", SchrodingerCatAlignsWithJackalKiller),
     ("マッドゲッサーは会議中の正解で対象をキルできる", MadGuesserKillsCorrectRole),
     ("マッドゲッサーは設定された会議内残弾まで推測できる", MadGuesserUsesConfiguredShotsPerMeeting),
     ("マッドゲッサーは会議内残弾を超えて推測できない", MadGuesserCannotExceedShotsPerMeeting),
@@ -530,6 +532,29 @@ static void VultureWinsImmediatelyAtConfiguredBodyCount()
     Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.CollectBody, 2, null, 3), 3));
     Assert(gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.Victory && gameEvent.ParticipantIds?.Contains((byte)1) == true));
     Assert(engine.Players[1].AbilityCooldowns.TryGetValue(AbilityId.CollectBody, out var cooldown) && cooldown == 15f);
+}
+
+static void SchrodingerCatAlignsWithImpostorKiller()
+{
+    var (engine, gateway) = CreateEngine();
+    engine.AssignRole(1, RoleId.Impostor);
+    engine.AssignRole(2, RoleId.SchrodingerCat);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Kill, 2, null, 2), 2));
+    Assert(engine.Players[2].IsAlive);
+    Assert(engine.Players[2].PrimaryRole == RoleId.Impostor);
+    Assert(gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.RoleChanged && gameEvent.TargetId == 2));
+    Assert(engine.Players[2].AbilityCooldowns.TryGetValue(AbilityId.Kill, out var cooldown) && cooldown == 47f);
+}
+
+static void SchrodingerCatAlignsWithJackalKiller()
+{
+    var (engine, gateway) = CreateEngine();
+    engine.AssignRole(1, RoleId.Jackal);
+    engine.AssignRole(2, RoleId.SchrodingerCat);
+    Assert(engine.TryHandleAbility(new AbilityRequest(1, AbilityId.Kill, 2, null, 2), 2));
+    Assert(engine.Players[2].IsAlive);
+    Assert(engine.Players[2].PrimaryRole == RoleId.Sidekick);
+    Assert(gateway.Events.Any(gameEvent => gameEvent.Kind == GameEventKind.RoleChanged && gameEvent.TargetId == 2));
 }
 
 static void MadGuesserKillsCorrectRole()

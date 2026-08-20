@@ -362,7 +362,7 @@ public sealed class RoleEngine
             AbilityId.Bribe => TryBribe(actor, request.TargetId, now),
             AbilityId.Douse => TryDouse(actor, request.TargetId, now),
             AbilityId.Ignite => TryIgnite(actor, now),
-            AbilityId.AlignFaction => TryRoleAction(actor, RoleId.SchrodingerCat, AbilityId.AlignFaction, now),
+            AbilityId.AlignFaction => Reject(actor, AbilityId.AlignFaction, now, "シュレディンガーの猫は攻撃された時に自動で陣営同調します。"),
             AbilityId.StealItem => TryStealItem(actor, request.TargetId, now),
             AbilityId.ForceEject => TryRoleAction(actor, RoleId.Bouncer, AbilityId.ForceEject, now),
             AbilityId.CaptureGhost => TryCaptureGhost(actor, request.TargetId, now),
@@ -783,6 +783,14 @@ public sealed class RoleEngine
         if (AreJackalAllies(actor, target))
             return Reject(actor, AbilityId.Kill, now, "ジャッカル陣営の味方はキルできません。");
 
+        // SNR SchrodingersCatAbility.TryMurderと同じく、未同調の猫を最初にキルしようとした時は
+        // キルを無効化して攻撃者の陣営へ自動同調させる。手動能力や任意の陣営選択は行わない。
+        if (TryConvertSchrodingerCatOnAttack(actor, target, now))
+        {
+            SetCooldown(actor, AbilityId.Kill, now, _options.StandardKillCooldown);
+            return Accept(actor, AbilityId.Kill, now);
+        }
+
         if (actor.PrimaryRole == RoleId.Sheriff)
         {
             if (actor.SheriffKillsRemaining <= 0)
@@ -822,6 +830,44 @@ public sealed class RoleEngine
         KillPlayer(target.PlayerId, actor.PlayerId, now, "直接キル", actor.PrimaryRole == RoleId.Ninja, erased);
         Accept(actor, AbilityId.Kill, now);
         EvaluateVictory(now);
+        return true;
+    }
+
+    /// <summary>
+    /// SNR SchrodingersCatAbilityの被キル時同調を、ホスト確定のRoleId変更へ適合する。
+    /// trueの場合はキルを取消し、猫は生存したまま攻撃者側へ移る。
+    /// </summary>
+    private bool TryConvertSchrodingerCatOnAttack(PlayerState attacker, PlayerState target, float now)
+    {
+        if (target.PrimaryRole != RoleId.SchrodingerCat)
+            return false;
+
+        RoleId? alignedRole = RoleCatalog.GetFaction(attacker.PrimaryRole) switch
+        {
+            Faction.Impostor => RoleId.Impostor,
+            Faction.Crew => RoleId.Crewmate,
+            _ when IsJackalTeamRole(attacker.PrimaryRole) => RoleId.Sidekick,
+            _ when _options.SchrodingerCatCrewOnKillByNonSpecific => RoleId.Crewmate,
+            _ => null,
+        };
+        if (alignedRole is not RoleId newRole)
+            return false;
+
+        target.PrimaryRole = newRole;
+        target.AbilityCooldowns.Clear();
+        target.EffectExpiresAt.Clear();
+        target.EffectTargets.Clear();
+        target.EffectCounts.Clear();
+        target.SecondaryEffectTargetId = null;
+        if (_options.SchrodingerCatHasKillAbility && newRole is RoleId.Impostor or RoleId.Sidekick)
+            target.AbilityCooldowns[AbilityId.Kill] = now + _options.SchrodingerCatKillCooldown;
+
+        _gateway.Emit(new GameEvent(
+            GameEventKind.RoleChanged,
+            now,
+            attacker.PlayerId,
+            target.PlayerId,
+            $"SchrodingerCatAligned:{newRole}"));
         return true;
     }
 

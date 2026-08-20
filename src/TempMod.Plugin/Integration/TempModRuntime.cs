@@ -526,7 +526,6 @@ internal sealed class TempModRuntime : IRoleGameGateway
             AbilityId.LinkCurse => "呪詛リンク",
             AbilityId.AlchemyStealth => "錬金ステルス",
             AbilityId.RecruitSidekick => "陣営勧誘",
-            AbilityId.AlignFaction => "陣営同調",
             AbilityId.InfectKill => "感染キル",
             AbilityId.AbandonTasks => "タスク放棄",
             AbilityId.Bribe => "買収",
@@ -602,7 +601,8 @@ internal sealed class TempModRuntime : IRoleGameGateway
         // 神は全知ボタンを持たず、名前の下に全役職を常時表示する受動能力を持つ。
         RoleId.God => (AbilityId)0,
         RoleId.Jackal => AbilityId.RecruitSidekick,
-        RoleId.SchrodingerCat => AbilityId.AlignFaction,
+        // SNR準拠: 猫はボタンを持たず、最初に攻撃された時に自動同調する。
+        RoleId.SchrodingerCat => (AbilityId)0,
         RoleId.Zombie => AbilityId.InfectKill,
         RoleId.Apathy => AbilityId.AbandonTasks,
         RoleId.Advocate => AbilityId.Bribe,
@@ -747,7 +747,7 @@ internal sealed class TempModRuntime : IRoleGameGateway
             RoleId.Alchemist => "  [F: 錬金ステルス]",
             RoleId.God => "  [常時: 全役職表示]",
             RoleId.Jackal => "  [F: キル／陣営勧誘]",
-            RoleId.SchrodingerCat => "  [F: 陣営同調]",
+            RoleId.SchrodingerCat => "  [受動: 攻撃者の陣営へ自動同調]",
             RoleId.Zombie => "  [F: 感染キル]",
             RoleId.Apathy => "  [F: タスク放棄]",
             RoleId.Advocate => "  [F: 買収]",
